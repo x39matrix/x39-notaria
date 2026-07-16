@@ -9,6 +9,7 @@ import { useLang } from './i18n';
 import { api } from './api';
 import { e2e } from './e2e';
 import { e2e2 } from './e2e2';
+import { computeChainTip } from './chain';
 
 const OtsBadge = ({ ots, status, t }) => {
   if (status !== 'sealed') return <span className="nt-badge nt-badge-pending" data-testid="agreement-status-badge">{t('ag.badgePending')}</span>;
@@ -33,6 +34,7 @@ export default function Acuerdo() {
   const [error, setError] = useState(null);
   const [sharedKey, setSharedKey] = useState(null);
   const [pqActive, setPqActive] = useState(false);
+  const [chainCheck, setChainCheck] = useState(null);
   const [view, setView] = useState([]);
   const identityRef = useRef(null);
   const pqIdRef = useRef(null);
@@ -139,6 +141,19 @@ export default function Acuerdo() {
     return () => { stop = true; };
   }, [msgs, sharedKey]);
 
+  // Post-sellado: verifica que el chat_merkle_root firmado coincide con la cadena
+  // recomputada localmente. Si no, el servidor sello una cadena que el cliente no vio.
+  useEffect(() => {
+    const root = ag?.proof?.chat_merkle_root;
+    if (!sealed || !root || msgs.length === 0) { setChainCheck(null); return; }
+    let stop = false;
+    (async () => {
+      const { tip } = await computeChainTip(msgs, ag.party_a);
+      if (!stop) setChainCheck(tip === root ? 'ok' : 'fail');
+    })();
+    return () => { stop = true; };
+  }, [sealed, ag?.proof?.chat_merkle_root, msgs, ag?.party_a]);
+
   const send = async () => {
     const v = text.trim();
     if (!v) return;
@@ -157,6 +172,18 @@ export default function Acuerdo() {
   const sign = async () => {
     setSigning(true);
     try {
+      // Guardian anti-servidor: recomputa la cadena de hashes localmente desde los
+      // ciphertexts que ESTE cliente ve y bloquea la firma si el servidor propone
+      // un tip distinto (omision, reordenacion o insercion de mensajes).
+      if (msgs.length > 0) {
+        const local = await computeChainTip(msgs, ag.party_a);
+        const server = await api.chainTip(id);
+        if (server.count !== local.count || server.tip !== local.tip) {
+          toast.error(t('ag.chainMismatch'), { duration: 9000 });
+          load();
+          return;
+        }
+      }
       const a = await api.sign(id);
       setAg(a);
       if (a.status === 'sealed') {
@@ -321,6 +348,13 @@ export default function Acuerdo() {
                 <div className="nt-kv"><span>{t('ag.sealedAt')}</span><span className="nt-mono">{ag.sealed_at}</span></div>
                 <div className="nt-kv"><span>{t('ag.proofHash')}</span><span className="nt-mono" style={{ fontSize: 10 }} data-testid="proof-hash">{ag.proof?.proof_hash}</span></div>
                 <div className="nt-kv"><span>{t('ag.chatHash')}</span><span className="nt-mono" style={{ fontSize: 10 }}>{ag.proof?.chat_hash}</span></div>
+                {ag.proof?.chat_merkle_root && (
+                  <div className="nt-kv"><span>{t('ag.chainLabel')}</span>
+                    <span className="nt-mono" style={{ fontSize: 10, color: chainCheck === 'fail' ? '#b3261e' : chainCheck === 'ok' ? 'var(--seal)' : undefined, fontWeight: chainCheck ? 700 : 400 }} data-testid="chain-verify-badge">
+                      {chainCheck === 'ok' ? `✓ ${t('ag.chainOk')}` : chainCheck === 'fail' ? `✗ ${t('ag.chainFail')}` : ag.proof.chat_merkle_root.slice(0, 16) + '…'}
+                    </span>
+                  </div>
+                )}
                 {ag.pq && <div className="nt-kv"><span>{t('ag.pqSig')}</span><span className="nt-mono">ML-DSA-87</span></div>}
                 {ag.ots?.status === 'anchored_btc' && (
                   <div className="nt-kv"><span>{t('landing.certAnchorLabel')}</span>

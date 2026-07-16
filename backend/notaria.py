@@ -474,6 +474,17 @@ async def get_messages(aid: str, email: str = Depends(current_user)):
     return {"frozen": a["status"] == "sealed", "messages": msgs}
 
 
+@notaria_router.get("/agreements/{aid}/chain_tip")
+async def get_chain_tip(aid: str, email: str = Depends(current_user)):
+    """Tip actual de la cadena de hashes del chat. El cliente NO confia en este valor:
+    lo recomputa localmente desde sus ct/iv y bloquea la firma si no coincide."""
+    a = na.find_one({"agreement_id": aid}, {"_id": 0})
+    if not a or not _member(a, email):
+        raise HTTPException(403, "Acceso restringido")
+    entries, tip = _build_chat_chain(a)
+    return {"tip": tip if entries else None, "count": len(entries)}
+
+
 @notaria_router.post("/agreements/{aid}/messages")
 async def post_message(aid: str, data: MessageModel, request: Request, email: str = Depends(require_csrf)):
     _rate_limit(request, "msg", limit=40, window=60)
@@ -582,11 +593,38 @@ def _chat_hash(aid: str) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _build_chat_chain(a: dict):
+    """Cadena de hashes enlazada (anti-omision/anti-reordenacion) del chat E2E.
+    Zero-knowledge: solo content_hash (sha256 del ciphertext), rol A/B y ts.
+    Nunca ct/iv ni email. Verificable client-side (el cliente tiene ct/iv) y offline.
+      content_hash = sha256(ct||iv)  (o sha256(text) en hilos demo en claro)
+      msg_hash     = sha256(prev_hash:content_hash:ts:role)
+    Devuelve (entries, tip)."""
+    aid = a["agreement_id"]
+    pa = a["party_a"]
+    msgs = list(nmsg.find({"agreement_id": aid},
+                          {"_id": 0, "sender": 1, "text": 1, "ct": 1, "iv": 1, "ts": 1}).sort("ts", 1).limit(500))
+    entries = []
+    prev = "0" * 64
+    for i, m in enumerate(msgs):
+        body = (m.get("ct", "") + m.get("iv", "")) or m.get("text", "")
+        content_hash = hashlib.sha256(body.encode()).hexdigest()
+        role = "A" if m.get("sender") == pa else "B"
+        ts = m.get("ts", "")
+        msg_hash = hashlib.sha256(f"{prev}:{content_hash}:{ts}:{role}".encode()).hexdigest()
+        entries.append({"index": i, "ts": ts, "role": role,
+                        "content_hash": content_hash, "prev_hash": prev, "msg_hash": msg_hash})
+        prev = msg_hash
+    return entries, prev
+
+
 async def _seal(a: dict):
     """Congela el chat, construye la prueba, la firma (ML-DSA) y la ancla (OTS)."""
     chat_h = _chat_hash(a["agreement_id"])
+    chain_entries, chain_tip = _build_chat_chain(a)
+    is_v2 = len(chain_entries) > 0
     proof = {
-        "v": "X39-NOTARIA-1",
+        "v": "X39-NOTARIA-2" if is_v2 else "X39-NOTARIA-1",
         "agreement_id": a["agreement_id"],
         "title": a["title"],
         "content_hash": a["content_hash"],
@@ -598,6 +636,8 @@ async def _seal(a: dict):
         "signed_b": a["signatures"].get("B"),
         "sealed_at": _now(),
     }
+    if is_v2:
+        proof["chat_merkle_root"] = chain_tip
     payload = json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
     proof_hash = hashlib.sha256(payload).hexdigest()
     proof["proof_hash"] = proof_hash
@@ -611,6 +651,8 @@ async def _seal(a: dict):
         "stamped_at": _now(),
     }
     upd = {"status": "sealed", "sealed_at": proof["sealed_at"], "proof": proof, "ots": ots_doc}
+    if is_v2:
+        upd["chat_chain"] = {"agreement_id": a["agreement_id"], "v": "X39-NOTARIA-2", "entries": chain_entries}
     na.update_one({"agreement_id": a["agreement_id"]}, {"$set": upd})
     a.update(upd)
 
@@ -931,6 +973,8 @@ async def download_evidence_bundle(aid: str):
     if ots_raw:
         entries.append(("proof.json.ots", ots_raw))
     entries.append(("signatures.json", json.dumps(sigs, ensure_ascii=False, indent=2, sort_keys=True).encode()))
+    if a.get("chat_chain"):
+        entries.append(("chat_chain.json", json.dumps(a["chat_chain"], ensure_ascii=False, indent=2, sort_keys=True).encode()))
     buf = io.BytesIO()
     stamp = (2009, 1, 3, 18, 15, 5)  # bloque genesis de Bitcoin: timestamps fijos -> ZIP determinista
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:

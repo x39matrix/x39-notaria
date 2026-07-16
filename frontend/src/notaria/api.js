@@ -45,6 +45,7 @@ export const api = {
   join: (id, invite_token) => req(`/agreements/${id}/join`, { method: 'POST', body: { invite_token } }),
   sign: (id) => req(`/agreements/${id}/sign`, { method: 'POST' }),
   getMessages: (id) => req(`/agreements/${id}/messages`),
+  chainTip: (id) => req(`/agreements/${id}/chain_tip`),
   postMessage: (id, ct, iv) => req(`/agreements/${id}/messages`, { method: 'POST', body: { ct, iv } }),
   publishE2EKey: (id, public_key_jwk) => req(`/agreements/${id}/e2e_key`, { method: 'POST', body: { public_key_jwk } }),
   getE2EKeys: (id) => req(`/agreements/${id}/e2e_keys`),
