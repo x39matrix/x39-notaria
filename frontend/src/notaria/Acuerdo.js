@@ -8,6 +8,7 @@ import { useAuth } from './NotariaApp';
 import { useLang } from './i18n';
 import { api } from './api';
 import { e2e } from './e2e';
+import { e2e2 } from './e2e2';
 
 const OtsBadge = ({ ots, status, t }) => {
   if (status !== 'sealed') return <span className="nt-badge nt-badge-pending" data-testid="agreement-status-badge">{t('ag.badgePending')}</span>;
@@ -31,8 +32,10 @@ export default function Acuerdo() {
   const [payChecking, setPayChecking] = useState(false);
   const [error, setError] = useState(null);
   const [sharedKey, setSharedKey] = useState(null);
+  const [pqActive, setPqActive] = useState(false);
   const [view, setView] = useState([]);
   const identityRef = useRef(null);
+  const pqIdRef = useRef(null);
   const chatEndRef = useRef(null);
   const sealed = ag?.status === 'sealed';
   const locale = { es: 'es-ES', en: 'en-GB', zh: 'zh-CN', ja: 'ja-JP' }[lang] || 'es-ES';
@@ -52,7 +55,7 @@ export default function Acuerdo() {
   useEffect(() => { load(); }, [load]);
 
   // Al cambiar de acuerdo, resetea el secreto compartido para re-derivarlo con la contraparte correcta.
-  useEffect(() => { setSharedKey(null); setView([]); }, [id]);
+  useEffect(() => { setSharedKey(null); setPqActive(false); setView([]); }, [id]);
 
   useEffect(() => {
     if (sealed) return;
@@ -64,24 +67,53 @@ export default function Acuerdo() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [view.length]);
 
-  // E2E: publica mi pubkey ECDH una vez, luego deriva el secreto compartido con la contraparte.
+  // E2E v2: handshake hibrido post-cuantico X-Wing (ML-KEM-768 + X25519, IETF).
+  // A publica su pubkey; B encapsula y publica el ct; ambos derivan AES-256-GCM via HKDF.
+  // Hilos con claves P-256 ya establecidas por ambas partes siguen en v1 (sin downgrade de v2 a v1).
   useEffect(() => {
     if (!user?.email || !ag?.my_role || sealed || sharedKey) return;
     let stop = false;
     const setup = async () => {
       try {
-        if (!identityRef.current) {
-          identityRef.current = await e2e.getIdentity(user.email);
-          await api.publishE2EKey(id, identityRef.current.pubJwk).catch(() => {});
+        const pq = await api.getE2EPQKeys(id).catch(() => null);
+        if (stop || !pq) return;
+        if (!pq.A && !pq.B) {
+          const legacy = await api.getE2EKeys(id).catch(() => null);
+          if (stop) return;
+          if (legacy?.A && legacy?.B) {
+            if (!identityRef.current) {
+              identityRef.current = await e2e.getIdentity(user.email);
+              await api.publishE2EKey(id, identityRef.current.pubJwk).catch(() => {});
+            }
+            const peerJwk = legacy[ag.my_role === 'A' ? 'B' : 'A'];
+            if (peerJwk) {
+              const sk = await e2e.deriveKey(identityRef.current.privKey, peerJwk);
+              if (!stop) { setPqActive(false); setSharedKey(sk); }
+            }
+            return;
+          }
         }
-        const keys = await api.getE2EKeys(id).catch(() => null);
-        if (!keys || stop) return;
-        const peerJwk = keys[ag.my_role === 'A' ? 'B' : 'A'];
-        if (peerJwk) {
-          const sk = await e2e.deriveKey(identityRef.current.privKey, peerJwk);
-          if (!stop) setSharedKey(sk);
+        if (ag.my_role === 'A') {
+          if (!pqIdRef.current) pqIdRef.current = e2e2.getIdentityA(user.email);
+          const me = pqIdRef.current;
+          if ((pq.A?.xwing_pub_b64 || null) !== me.pubB64) {
+            await api.publishE2EPQKey(id, { xwing_pub_b64: me.pubB64 }).catch(() => {});
+            return;
+          }
+          if (pq.B?.xwing_ct_b64) {
+            const ss = e2e2.decapsulate(me, pq.B.xwing_ct_b64);
+            const key = await e2e2.deriveKey(id, ss);
+            if (!stop) { setPqActive(true); setSharedKey(key); }
+          }
+        } else if (pq.A?.xwing_pub_b64) {
+          const enc = e2e2.encapsulate(id, user.email, pq.A.xwing_pub_b64, pq.B?.xwing_ct_b64 || null);
+          if ((pq.B?.xwing_ct_b64 || null) !== enc.ctB64) {
+            await api.publishE2EPQKey(id, { xwing_ct_b64: enc.ctB64 }).catch(() => {});
+          }
+          const key = await e2e2.deriveKey(id, enc.ss);
+          if (!stop) { setPqActive(true); setSharedKey(key); }
         }
-      } catch (e) { /* el chat muestra estado de espera hasta derivar */ }
+      } catch (e) { console.warn('e2e handshake:', e?.message); /* el chat muestra estado de espera hasta derivar */ }
     };
     setup();
     const timer = setInterval(setup, 4000);
@@ -321,7 +353,7 @@ export default function Acuerdo() {
             <div className="nt-chat-head">
               <Lock size={11} strokeWidth={1.5} style={{ verticalAlign: '-1px', marginRight: 5 }} />
               {t('ag.chatHead')}{frozen ? t('ag.chatFrozenSuffix') : ''}
-              {!frozen && sharedKey && <span data-testid="chat-e2e-badge" style={{ marginLeft: 6, color: 'var(--seal)', fontSize: 10, fontWeight: 700 }}>● E2E</span>}
+              {!frozen && sharedKey && <span data-testid="chat-e2e-badge" style={{ marginLeft: 6, color: 'var(--seal)', fontSize: 10, fontWeight: 700 }} title={pqActive ? 'X-Wing: ML-KEM-768 + X25519 (post-quantum hybrid)' : 'ECDH P-256'}>{pqActive ? '● E2E·PQ' : '● E2E'}</span>}
             </div>
             <div className="nt-chat-body">
               {view.length === 0 && <div className="nt-note" style={{ textAlign: 'center', margin: 'auto' }}>{t('ag.chatEmpty')}</div>}

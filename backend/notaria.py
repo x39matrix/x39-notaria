@@ -21,7 +21,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 import requests
-from fastapi import APIRouter, HTTPException, Depends, Request, Response, Header
+from fastapi import APIRouter, HTTPException, Depends, Request, Response, Header, BackgroundTasks
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from pymongo import MongoClient
@@ -153,27 +153,9 @@ def _rate_limit(request: Request, scope: str, limit: int, window: int = 60):
     _hits[key] = bucket
 
 
-# ---------- ML-DSA-87 operator key (persistent in Mongo, best-effort) ----------
-def _operator_key():
-    doc = nmeta.find_one({"_id": "operator_mldsa"})
-    if doc:
-        return base64.b64decode(doc["sk"]), base64.b64decode(doc["pk"])
-    pk, sk = _mldsa.generate_keypair()
-    nmeta.insert_one({"_id": "operator_mldsa",
-                      "pk": base64.b64encode(pk).decode(),
-                      "sk": base64.b64encode(sk).decode(),
-                      "created_at": _now()})
-    return sk, pk
-
-
-def _pq_sign(payload: bytes):
-    try:
-        sk, pk = _operator_key()
-        sig = _mldsa.sign(sk, payload)
-        return base64.b64encode(sig).decode(), base64.b64encode(pk).decode()
-    except Exception:
-        return None, None
-
+# SEC-003 (2026-07-16): clave WARM de operador RETIRADA. La sk fue eliminada de Mongo.
+# Las firmas WARM historicas siguen verificables (pk embebida en cada acuerdo).
+# La autoria post-cuantica de acuerdos nuevos la aporta SOLO la co-firma COLD air-gapped.
 
 # ---------- COLD key (air-gapped Pi 5 · ML-DSA-87) — solo verificacion, la sk NUNCA toca el server ----------
 def _require_admin(x_admin_token: str):
@@ -457,6 +439,11 @@ class E2EKeyModel(BaseModel):
     public_key_jwk: dict
 
 
+class E2EPQKeyModel(BaseModel):
+    xwing_pub_b64: Optional[str] = None
+    xwing_ct_b64: Optional[str] = None
+
+
 def _role(a: dict, email: str) -> str:
     return "A" if email == a["party_a"] else "B"
 
@@ -514,6 +501,63 @@ async def get_e2e_keys(aid: str, email: str = Depends(current_user)):
     return {"A": (keys.get("A") or {}).get("jwk"), "B": (keys.get("B") or {}).get("jwk")}
 
 
+# ---- E2E v2: hibrido post-cuantico X-Wing (ML-KEM-768 + X25519, draft IETF) ----
+E2E_PQ_SUITE = "XWING-MLKEM768-X25519-v2"
+XWING_PK_LEN, XWING_CT_LEN = 1216, 1120
+
+
+def _b64_len(s: str) -> int:
+    try:
+        return len(base64.b64decode(s, validate=True))
+    except Exception:
+        return -1
+
+
+@notaria_router.post("/agreements/{aid}/e2e_pq_key")
+async def publish_e2e_pq_key(aid: str, data: E2EPQKeyModel, email: str = Depends(current_user)):
+    """Publica material PUBLICO del handshake hibrido X-Wing. Nunca claves privadas.
+    Rol A publica su pubkey X-Wing; rol B publica el ciphertext encapsulado."""
+    a = na.find_one({"agreement_id": aid}, {"_id": 0})
+    if not a or not _member(a, email):
+        raise HTTPException(403, "Acceso restringido")
+    if a["status"] == "sealed":
+        raise HTTPException(409, "El hilo esta sellado")
+    role = _role(a, email)
+    entry = {}
+    if data.xwing_pub_b64 is not None:
+        if role != "A":
+            raise HTTPException(400, "Solo el rol A publica la pubkey X-Wing")
+        if _b64_len(data.xwing_pub_b64) != XWING_PK_LEN:
+            raise HTTPException(400, f"xwing_pub_b64 invalida ({XWING_PK_LEN} bytes X-Wing)")
+        entry["xwing_pub_b64"] = data.xwing_pub_b64
+    if data.xwing_ct_b64 is not None:
+        if role != "B":
+            raise HTTPException(400, "Solo el rol B publica la encapsulacion X-Wing")
+        if _b64_len(data.xwing_ct_b64) != XWING_CT_LEN:
+            raise HTTPException(400, f"xwing_ct_b64 invalida ({XWING_CT_LEN} bytes X-Wing)")
+        entry["xwing_ct_b64"] = data.xwing_ct_b64
+    if not entry:
+        raise HTTPException(400, "Nada que publicar")
+    sets = {f"e2e_pq.{role}.{k}": v for k, v in entry.items()}
+    sets[f"e2e_pq.{role}.at"] = _now()
+    sets["e2e_pq.suite"] = E2E_PQ_SUITE
+    na.update_one({"agreement_id": aid}, {"$set": sets})
+    return {"ok": True, "suite": E2E_PQ_SUITE}
+
+
+@notaria_router.get("/agreements/{aid}/e2e_pq_keys")
+async def get_e2e_pq_keys(aid: str, email: str = Depends(current_user)):
+    a = na.find_one({"agreement_id": aid}, {"_id": 0})
+    if not a or not _member(a, email):
+        raise HTTPException(403, "Acceso restringido")
+    keys = a.get("e2e_pq", {})
+    pub_a = (keys.get("A") or {}).get("xwing_pub_b64")
+    ct_b = (keys.get("B") or {}).get("xwing_ct_b64")
+    return {"suite": keys.get("suite"),
+            "A": {"xwing_pub_b64": pub_a} if pub_a else None,
+            "B": {"xwing_ct_b64": ct_b} if ct_b else None}
+
+
 def _chat_hash(aid: str) -> str:
     msgs = list(nmsg.find({"agreement_id": aid},
                           {"_id": 0, "sender": 1, "text": 1, "ct": 1, "iv": 1, "ts": 1}).sort("ts", 1).limit(500))
@@ -540,7 +584,6 @@ async def _seal(a: dict):
     payload = json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
     proof_hash = hashlib.sha256(payload).hexdigest()
     proof["proof_hash"] = proof_hash
-    pq_sig, pq_pub = _pq_sign(payload)
     ots_b64, calendars = await ots_stamp(proof_hash, payload)
     ots_doc = {
         "ots_b64": ots_b64,
@@ -551,27 +594,41 @@ async def _seal(a: dict):
         "stamped_at": _now(),
     }
     upd = {"status": "sealed", "sealed_at": proof["sealed_at"], "proof": proof, "ots": ots_doc}
-    if pq_sig:
-        upd["pq"] = {"algorithm": "ML-DSA-87", "signature_b64": pq_sig, "public_key_b64": pq_pub}
     na.update_one({"agreement_id": a["agreement_id"]}, {"$set": upd})
     a.update(upd)
 
 
+async def _seal_bg(aid: str):
+    """Sella en segundo plano: el firmante ya recibio respuesta; aqui ocurre
+    la firma ML-DSA y el anclaje OTS (round-trip de red a los calendarios)."""
+    try:
+        a = na.find_one({"agreement_id": aid}, {"_id": 0})
+        if a and a["status"] == "sealing":
+            await _seal(a)
+    except Exception:
+        # Nunca dejar el acuerdo atascado en 'sealing': revertir permite reintentar.
+        na.update_one({"agreement_id": aid, "status": "sealing"},
+                      {"$set": {"status": "pending_signatures"}})
+
+
 @notaria_router.post("/agreements/{aid}/sign")
-async def sign_agreement(aid: str, email: str = Depends(require_csrf)):
+async def sign_agreement(aid: str, background_tasks: BackgroundTasks, email: str = Depends(require_csrf)):
     a = na.find_one({"agreement_id": aid}, {"_id": 0})
     if not a or not _member(a, email):
         raise HTTPException(403, "No participas en este acuerdo")
-    if a["status"] == "sealed":
+    if a["status"] in ("sealed", "sealing"):
         return _public_view(a, email)
     role = "A" if email == a["party_a"] else "B"
     sigs = a.get("signatures", {})
     sigs[role] = _now()
-    na.update_one({"agreement_id": aid}, {"$set": {"signatures": sigs}})
-    a["signatures"] = sigs
     both = bool(a.get("party_b")) and "A" in sigs and "B" in sigs
+    new_status = "sealing" if both else a["status"]
+    na.update_one({"agreement_id": aid}, {"$set": {"signatures": sigs, "status": new_status}})
+    a["signatures"] = sigs
+    a["status"] = new_status
+    # El sellado (firma ML-DSA + anclaje OTS) corre en segundo plano: respuesta inmediata al firmante.
     if both:
-        await _seal(a)
+        background_tasks.add_task(_seal_bg, aid)
     return _public_view(a, email)
 
 
@@ -793,7 +850,14 @@ Si el estado es "pending", el ancla espera confirmacion en bloque; reintenta mas
 ots upgrade proof.json.ots && ots verify proof.json.ots
 ```
 
-## 3. Firma post-cuantica / Post-quantum signature (ML-DSA-87, FIPS-204{', WARM + COLD' if has_cold else ', tier WARM'})
+## 3. Firma post-cuantica / Post-quantum signature (ML-DSA-87, FIPS-204{', co-firma COLD air-gapped' if has_cold else ''})
+
+> La clave WARM (operador, servidor) fue RETIRADA el 2026-07-16 (SEC-003). Las firmas WARM de acuerdos
+> anteriores siguen siendo verificables: la clave publica va embebida en `signatures.json`. En acuerdos
+> nuevos, la autoria post-cuantica la aporta exclusivamente la co-firma COLD (sk air-gapped, nunca en red).
+> The WARM (server-side operator) key was RETIRED on 2026-07-16 (SEC-003). Historical WARM signatures remain
+> verifiable (public key embedded in `signatures.json`). For new agreements, post-quantum authorship is
+> provided exclusively by the COLD co-signature (air-gapped sk, never networked).
 
 ```
 pip install pqcrypto
@@ -840,6 +904,7 @@ async def download_evidence_bundle(aid: str):
         "content_hash": a.get("content_hash"),
         "sealed_at": a.get("sealed_at"),
         "warm": ({"algorithm": "ML-DSA-87 (FIPS-204)", "tier": "WARM",
+                  "note": "clave de operador retirada 2026-07-16 (SEC-003); firma historica verificable / operator key retired; historical signature remains verifiable",
                   "signature_b64": a["pq"].get("signature_b64"),
                   "public_key_b64": a["pq"].get("public_key_b64")} if a.get("pq") else None),
         "cold": a.get("cold"),
@@ -908,7 +973,7 @@ async def certificate_pdf(aid: str):
     else:
         row("Ancla Bitcoin", "Pendiente de confirmacion (OpenTimestamps)")
     if a.get("pq"):
-        row("Firma post-cuantica", "ML-DSA-87 (FIPS-204) — clave publica en la pagina de verificacion", mono=False)
+        row("Firma post-cuantica", "ML-DSA-87 (FIPS-204) — tier WARM historico (clave retirada)", mono=False)
     if a.get("cold"):
         row("Co-firma soberana (COLD)", f"ML-DSA-87 air-gapped · fp {a['cold']['fingerprint'][:16]}", mono=False)
     c.setFillColor(seal); c.circle(W / 2, 40 * mm, 15 * mm, stroke=1, fill=0)

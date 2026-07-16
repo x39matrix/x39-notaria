@@ -103,3 +103,6 @@ test_reports/
 test_result.md
 backend/hwg/gnupg/
 .gitconfig
+
+# OTS runtime working dir (agreement payloads — never publish)
+backend/hwg/ots_work/

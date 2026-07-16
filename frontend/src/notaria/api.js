@@ -36,7 +36,7 @@ export const api = {
   logout: async () => {
     const d = await req('/auth/logout', { method: 'POST' });
     _csrf = null;
-    Object.keys(localStorage).filter((k) => k.startsWith('nt_e2e_')).forEach((k) => localStorage.removeItem(k));
+    Object.keys(localStorage).filter((k) => k.startsWith('nt_e2e')).forEach((k) => localStorage.removeItem(k));
     return d;
   },
   listAgreements: () => req('/agreements'),
@@ -48,6 +48,8 @@ export const api = {
   postMessage: (id, ct, iv) => req(`/agreements/${id}/messages`, { method: 'POST', body: { ct, iv } }),
   publishE2EKey: (id, public_key_jwk) => req(`/agreements/${id}/e2e_key`, { method: 'POST', body: { public_key_jwk } }),
   getE2EKeys: (id) => req(`/agreements/${id}/e2e_keys`),
+  publishE2EPQKey: (id, body) => req(`/agreements/${id}/e2e_pq_key`, { method: 'POST', body }),
+  getE2EPQKeys: (id) => req(`/agreements/${id}/e2e_pq_keys`),
   refreshOts: (id) => req(`/agreements/${id}/ots/refresh`, { method: 'POST' }),
   verify: (hash) => req('/verify', { method: 'POST', body: { hash } }),
   publicProof: (id) => req(`/public/${id}`),
