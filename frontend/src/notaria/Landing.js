@@ -33,6 +33,12 @@ export default function Landing() {
   return (
     <div data-testid="landing-page">
       <Nav />
+      <a href="https://app.emergent.sh/showcase/fabrizio/121cef04-5dc5-49b8-a930-9877306f620b"
+        target="_blank" rel="noopener noreferrer" data-testid="contest-vote-banner"
+        style={{ display: 'block', textAlign: 'center', padding: '9px 14px', fontSize: 12,
+                 background: 'var(--seal)', color: '#fff', textDecoration: 'none', letterSpacing: '0.02em' }}>
+        {t('landing.voteContest')} →
+      </a>
       <main className="nt-wrap">
         <section className="nt-hero">
           <div>

@@ -13,6 +13,7 @@ import time
 import json
 import asyncio
 import hashlib
+import hmac
 import secrets
 import base64
 import zipfile
@@ -64,11 +65,23 @@ def _clean(s: str, maxlen: int = 200) -> str:
     return s[:maxlen]
 
 
+_FP_SECRET = os.environ["FP_HMAC_SECRET"].encode()
+
+
 def _email_fp(email: Optional[str]) -> Optional[str]:
-    """Huella SHA-256 del email (identidad verificable sin exponer el email en claro)."""
+    """Huella HMAC-SHA256 del email (identidad verificable sin exponer el email;
+    el secreto de servidor impide confirmar emails adivinados desde la huella publica)."""
     if not email:
         return None
-    return hashlib.sha256(email.lower().strip().encode()).hexdigest()
+    return hmac.new(_FP_SECRET, email.lower().strip().encode(), hashlib.sha256).hexdigest()
+
+
+def _fp_a(a: dict) -> Optional[str]:
+    return (a.get("proof") or {}).get("party_a_fp") or _email_fp(a["party_a"])
+
+
+def _fp_b(a: dict) -> Optional[str]:
+    return (a.get("proof") or {}).get("party_b_fp") or _email_fp(a.get("party_b"))
 
 
 # ---------- Validacion de direccion Bitcoin (bech32/bech32m + base58check) ----------
@@ -143,9 +156,13 @@ _hits: dict = {}
 
 
 def _rate_limit(request: Request, scope: str, limit: int, window: int = 60):
-    ip = request.client.host if request.client else "anon"
+    xff = request.headers.get("X-Forwarded-For", "")
+    ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else "anon")
     key = f"{ip}:{scope}"
     now = time.time()
+    if len(_hits) > 10000:
+        for k in [k for k, v in _hits.items() if not v or now - v[-1] > 300]:
+            _hits.pop(k, None)
     bucket = [t for t in _hits.get(key, []) if now - t < window]
     if len(bucket) >= limit:
         raise HTTPException(429, "Demasiadas solicitudes. Espera un momento.")
@@ -270,7 +287,7 @@ async def auth_session(data: SessionExchangeModel, request: Request, response: R
         upsert=True,
     )
     response.set_cookie("session_token", session_token, max_age=7 * 24 * 3600,
-                        httponly=True, secure=True, samesite="none", path="/")
+                        httponly=True, secure=True, samesite="lax", path="/")
     return {"email": email, "name": user.get("name", ""), "picture": user.get("picture", ""), "csrf_token": csrf}
 
 
@@ -348,7 +365,7 @@ def _public_view(a: dict, email: Optional[str] = None) -> dict:
 
 
 @notaria_router.post("/agreements")
-async def create_agreement(data: CreateAgreementModel, request: Request, email: str = Depends(current_user)):
+async def create_agreement(data: CreateAgreementModel, request: Request, email: str = Depends(require_csrf)):
     _rate_limit(request, "create", limit=20, window=60)
     ch = data.content_hash.lower().strip()
     if not HEX64.match(ch):
@@ -412,7 +429,7 @@ class JoinModel(BaseModel):
 
 
 @notaria_router.post("/agreements/{aid}/join")
-async def join_agreement(aid: str, data: JoinModel, email: str = Depends(current_user)):
+async def join_agreement(aid: str, data: JoinModel, email: str = Depends(require_csrf)):
     a = na.find_one({"agreement_id": aid}, {"_id": 0})
     if not a:
         raise HTTPException(404, "Acuerdo no encontrado")
@@ -458,7 +475,7 @@ async def get_messages(aid: str, email: str = Depends(current_user)):
 
 
 @notaria_router.post("/agreements/{aid}/messages")
-async def post_message(aid: str, data: MessageModel, request: Request, email: str = Depends(current_user)):
+async def post_message(aid: str, data: MessageModel, request: Request, email: str = Depends(require_csrf)):
     _rate_limit(request, "msg", limit=40, window=60)
     a = na.find_one({"agreement_id": aid}, {"_id": 0})
     if not a or not _member(a, email):
@@ -477,7 +494,7 @@ async def post_message(aid: str, data: MessageModel, request: Request, email: st
 
 
 @notaria_router.post("/agreements/{aid}/e2e_key")
-async def publish_e2e_key(aid: str, data: E2EKeyModel, email: str = Depends(current_user)):
+async def publish_e2e_key(aid: str, data: E2EKeyModel, email: str = Depends(require_csrf)):
     """Publica la pubkey ECDH P-256 del miembro (para derivar el secreto compartido). No es la sk."""
     a = na.find_one({"agreement_id": aid}, {"_id": 0})
     if not a or not _member(a, email):
@@ -514,7 +531,7 @@ def _b64_len(s: str) -> int:
 
 
 @notaria_router.post("/agreements/{aid}/e2e_pq_key")
-async def publish_e2e_pq_key(aid: str, data: E2EPQKeyModel, email: str = Depends(current_user)):
+async def publish_e2e_pq_key(aid: str, data: E2EPQKeyModel, email: str = Depends(require_csrf)):
     """Publica material PUBLICO del handshake hibrido X-Wing. Nunca claves privadas.
     Rol A publica su pubkey X-Wing; rol B publica el ciphertext encapsulado."""
     a = na.find_one({"agreement_id": aid}, {"_id": 0})
@@ -648,7 +665,7 @@ async def _refresh_ots(a: dict) -> dict:
 
 
 @notaria_router.post("/agreements/{aid}/ots/refresh")
-async def refresh_ots(aid: str, email: str = Depends(current_user)):
+async def refresh_ots(aid: str, email: str = Depends(require_csrf)):
     a = na.find_one({"agreement_id": aid}, {"_id": 0})
     if not a or not _member(a, email):
         raise HTTPException(403, "Acceso restringido")
@@ -680,8 +697,8 @@ async def verify_public(data: VerifyModel, request: Request):
         "content_hash": a["content_hash"],
         "proof_hash": a["proof"]["proof_hash"],
         "sealed_at": a["sealed_at"],
-        "party_a_fp": _email_fp(a["party_a"]),
-        "party_b_fp": _email_fp(a.get("party_b")),
+        "party_a_fp": _fp_a(a),
+        "party_b_fp": _fp_b(a),
         "payment": a.get("payment"),
         "ots_status": st["status"],
         "btc_block": st["btc_block"],
@@ -699,7 +716,7 @@ async def public_proof(aid: str):
     return {
         "agreement_id": aid, "title": a["title"], "content_hash": a["content_hash"],
         "proof_hash": a["proof"]["proof_hash"], "sealed_at": a["sealed_at"],
-        "party_a_fp": _email_fp(a["party_a"]), "party_b_fp": _email_fp(a.get("party_b")),
+        "party_a_fp": _fp_a(a), "party_b_fp": _fp_b(a),
         "payment": a.get("payment"),
         "ots_status": st["status"], "btc_block": st["btc_block"],
         "pq": {"algorithm": "ML-DSA-87", "signature_b64": a["pq"].get("signature_b64"), "public_key_b64": a["pq"]["public_key_b64"]} if a.get("pq") else None,
@@ -961,8 +978,8 @@ async def certificate_pdf(aid: str):
     row("Titulo del acuerdo", a["title"])
     row("Hash del contenido (SHA-256)", a["content_hash"], mono=True)
     row("Hash de la prueba", a["proof"]["proof_hash"], mono=True)
-    row("Parte A (fp SHA-256)", _email_fp(a["party_a"]) or "—", mono=True)
-    row("Parte B (fp SHA-256)", _email_fp(a.get("party_b")) or "—", mono=True)
+    row("Parte A (huella)", _fp_a(a) or "—", mono=True)
+    row("Parte B (huella)", _fp_b(a) or "—", mono=True)
     if a.get("payment"):
         pm = a["payment"]
         row("Pago acordado", f"{pm['amount']} {pm['currency']} — paga la Parte {pm['payer']}")

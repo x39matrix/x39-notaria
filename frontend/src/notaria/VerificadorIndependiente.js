@@ -114,6 +114,10 @@ ots verify ${fileBase}.ots`;
             <Copyable label={t('verify.pubkey')} value={proof.cold.public_key_b64} testid="verify-cold-pubkey" />
             <Copyable label={t('verify.signature')} value={proof.cold.signature_b64} testid="verify-cold-sig" />
             <CmdBlock title={t('verify.runPy')} cmd={pySnippet(proof.cold.public_key_b64, proof.cold.signature_b64, 'COLD')} />
+            <a className="nt-btn nt-btn-ghost" style={{ marginTop: 10 }} href="/runbook-ceremonia-cold.pdf"
+              target="_blank" rel="noopener noreferrer" data-testid="verify-cold-runbook">
+              <Download size={13} strokeWidth={1.5} /> {t('verify.runbook')}
+            </a>
           </>
         ) : (
           <p className="nt-note" style={{ marginTop: 4 }} data-testid="verify-no-cold">{t('verify.noCold')}</p>
