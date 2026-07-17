@@ -10,6 +10,7 @@ Verifica un bundle de evidencia (x39-evidencia-<aid>.zip) SIN confiar en X-39:
   5. Firma soberana : ML-DSA-87 (FIPS-204) COLD sobre los bytes de proof.json
                       (+ WARM historica si el bundle la incluye)
   6. Ancla Bitcoin  : ots verify proof.json.ots -f proof.json
+                      (--bitcoin-node URL: contrasta contra TU nodo, cero terceros)
 
 El mensaje firmado por ML-DSA-87 son los BYTES CRUDOS de proof.json (no proof_hash).
 proof.json NO contiene el campo proof_hash: vive en signatures.json y es sha256(proof.json).
@@ -218,14 +219,17 @@ def verify_msg_sigs(files: dict[str, bytes], proof: dict[str, Any]) -> None:
         die(EXIT_SIG, f"msg_sigs.signed={ms.get('signed')} pero verificadas={checked}")
 
 
-def verify_ots(proof_bytes: bytes, ots_bytes: bytes) -> None:
+def verify_ots(proof_bytes: bytes, ots_bytes: bytes, bitcoin_node: str | None = None) -> None:
     with tempfile.TemporaryDirectory() as td:
         p, o = Path(td) / "proof.json", Path(td) / "proof.json.ots"
         p.write_bytes(proof_bytes)
         o.write_bytes(ots_bytes)
+        cmd = ["ots"]
+        if bitcoin_node:
+            cmd += ["--bitcoin-node", bitcoin_node]
+        cmd += ["verify", str(o), "-f", str(p)]
         try:
-            r = subprocess.run(["ots", "verify", str(o), "-f", str(p)],
-                               capture_output=True, text=True, timeout=120)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         except FileNotFoundError:
             die(EXIT_IO, "comando 'ots' no encontrado. Instala: pip install opentimestamps-client")
         except subprocess.TimeoutExpired:
@@ -239,6 +243,9 @@ def main() -> None:
     ap.add_argument("bundle", type=Path, help="x39-evidencia-<aid>.zip")
     ap.add_argument("--content", type=Path, default=None, help="documento original (verifica content_hash)")
     ap.add_argument("--skip-ots", action="store_true", help="omitir OTS (entornos sin 'ots'/nodo)")
+    ap.add_argument("--bitcoin-node", default=None, metavar="URL",
+                    help="RPC de tu nodo Bitcoin (http://user:pass@host:8332 o cookie); "
+                         "verificacion soberana del ancla sin terceros")
     args = ap.parse_args()
     files = load_zip(args.bundle)
     proof_bytes = files["proof.json"]
@@ -248,8 +255,10 @@ def main() -> None:
     verify_msg_sigs(files, proof)
     notes = verify_signatures(proof_bytes, files["signatures.json"])
     if not args.skip_ots:
-        verify_ots(proof_bytes, files["proof.json.ots"])
+        verify_ots(proof_bytes, files["proof.json.ots"], args.bitcoin_node)
     print("VALID" + (" (OTS omitido)" if args.skip_ots else ""))
+    if not args.skip_ots and args.bitcoin_node:
+        print("  ancla:       verificada contra nodo Bitcoin PROPIO (cero terceros)")
     for n in notes:
         print(f"  AVISO:       {n}")
     print(f"  version:     {proof.get('v')}")
