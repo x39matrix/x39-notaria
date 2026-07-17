@@ -19,3 +19,16 @@ export async function computeChainTip(messages, partyA) {
   }
   return { tip: prev, count: messages.length };
 }
+
+// Verificacion offline de chat_chain.json (bundle): recomputa msg_hash + continuidad + tip==root.
+export async function verifyChainEntries(entries, root) {
+  let prev = '0'.repeat(64);
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.prev_hash !== prev) return { ok: false, index: i, reason: 'prev_hash' };
+    const h = await sha256Hex(`${prev}:${e.content_hash}:${e.ts || ''}:${e.role}`);
+    if (h !== e.msg_hash) return { ok: false, index: i, reason: 'msg_hash' };
+    prev = h;
+  }
+  return prev === root ? { ok: true } : { ok: false, index: -1, reason: 'tip' };
+}

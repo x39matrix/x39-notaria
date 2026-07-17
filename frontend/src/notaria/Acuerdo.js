@@ -10,6 +10,8 @@ import { api } from './api';
 import { e2e } from './e2e';
 import { e2e2 } from './e2e2';
 import { computeChainTip } from './chain';
+import { msgSig } from './sig';
+import { sha256Hex } from './api';
 
 const OtsBadge = ({ ots, status, t }) => {
   if (status !== 'sealed') return <span className="nt-badge nt-badge-pending" data-testid="agreement-status-badge">{t('ag.badgePending')}</span>;
@@ -38,6 +40,8 @@ export default function Acuerdo() {
   const [view, setView] = useState([]);
   const identityRef = useRef(null);
   const pqIdRef = useRef(null);
+  const sigIdRef = useRef(null);
+  const canSignRef = useRef(false);
   const chatEndRef = useRef(null);
   const sealed = ag?.status === 'sealed';
   const locale = { es: 'es-ES', en: 'en-GB', zh: 'zh-CN', ja: 'ja-JP' }[lang] || 'es-ES';
@@ -154,6 +158,28 @@ export default function Acuerdo() {
     return () => { stop = true; };
   }, [sealed, ag?.proof?.chat_merkle_root, msgs, ag?.party_a]);
 
+  // V3: publica la pubkey Ed25519 para firmas por mensaje (primera escritura gana).
+  // Si otro dispositivo ya registro una pubkey distinta, este envia sin firmar (honesto).
+  useEffect(() => {
+    if (!user?.email || !ag?.my_role || sealed) return;
+    let stop = false;
+    (async () => {
+      try {
+        if (!sigIdRef.current) sigIdRef.current = msgSig.getIdentity(user.email);
+        const keys = await api.getSigKeys(id);
+        if (stop) return;
+        const mine = keys[ag.my_role];
+        if (!mine) {
+          await api.publishSigKey(id, sigIdRef.current.pubB64);
+          canSignRef.current = true;
+        } else {
+          canSignRef.current = mine === sigIdRef.current.pubB64;
+        }
+      } catch { /* sin firma v3; el mensaje sigue siendo valido */ }
+    })();
+    return () => { stop = true; };
+  }, [user?.email, ag?.my_role, id, sealed]);
+
   const send = async () => {
     const v = text.trim();
     if (!v) return;
@@ -161,7 +187,12 @@ export default function Acuerdo() {
     setText('');
     try {
       const { ct, iv } = await e2e.encryptMsg(sharedKey, v);
-      const m = await api.postMessage(id, ct, iv);
+      let extra;
+      if (sigIdRef.current && canSignRef.current) {
+        const cts = new Date().toISOString();
+        extra = { sig_b64: msgSig.signMsg(sigIdRef.current, id, await sha256Hex(ct + iv), cts), cts };
+      }
+      const m = await api.postMessage(id, ct, iv, extra);
       setMsgs((prev) => [...prev, m]);
     } catch (e) {
       setText(v);

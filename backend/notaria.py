@@ -450,6 +450,8 @@ async def join_agreement(aid: str, data: JoinModel, email: str = Depends(require
 class MessageModel(BaseModel):
     ct: str
     iv: str
+    sig_b64: Optional[str] = None  # v3: firma Ed25519 del autor sobre x39msg:v3:aid:content_hash:cts
+    cts: Optional[str] = None      # v3: timestamp ISO del cliente (parte del string firmado)
 
 
 class E2EKeyModel(BaseModel):
@@ -497,9 +499,19 @@ async def post_message(aid: str, data: MessageModel, request: Request, email: st
     iv = (data.iv or "").strip()
     if not ct or not iv or len(ct) > 12000 or len(iv) > 64:
         raise HTTPException(400, "Mensaje cifrado invalido")
+    sig_b64 = (data.sig_b64 or "").strip() or None
+    cts = (data.cts or "").strip() or None
+    if sig_b64:
+        if not cts or len(cts) > 40:
+            raise HTTPException(400, "Firma v3 requiere cts valido")
+        if _b64_len(sig_b64) != 64:
+            raise HTTPException(400, "sig_b64 invalida (64 bytes Ed25519)")
     if nmsg.count_documents({"agreement_id": aid}) >= 500:
         raise HTTPException(409, "Limite de 500 mensajes por acuerdo alcanzado")
     msg = {"agreement_id": aid, "sender": email, "ct": ct, "iv": iv, "ts": _now()}
+    if sig_b64:
+        msg["sig_b64"] = sig_b64
+        msg["cts"] = cts
     nmsg.insert_one({**msg})
     return msg
 
@@ -586,6 +598,38 @@ async def get_e2e_pq_keys(aid: str, email: str = Depends(current_user)):
             "B": {"xwing_ct_b64": ct_b} if ct_b else None}
 
 
+class SigKeyModel(BaseModel):
+    ed25519_pub_b64: str
+
+
+@notaria_router.post("/agreements/{aid}/sig_key")
+async def publish_sig_key(aid: str, data: SigKeyModel, email: str = Depends(require_csrf)):
+    """v3: publica la pubkey Ed25519 del miembro para firmas por mensaje. Primera escritura gana."""
+    a = na.find_one({"agreement_id": aid}, {"_id": 0})
+    if not a or not _member(a, email):
+        raise HTTPException(403, "Acceso restringido")
+    if a["status"] == "sealed":
+        raise HTTPException(409, "El hilo esta sellado")
+    pk = (data.ed25519_pub_b64 or "").strip()
+    if _b64_len(pk) != 32:
+        raise HTTPException(400, "ed25519_pub_b64 invalida (32 bytes)")
+    role = _role(a, email)
+    existing = (a.get("sig_keys") or {}).get(role)
+    if existing and existing != pk:
+        raise HTTPException(409, "Pubkey de firma ya registrada para este rol")
+    na.update_one({"agreement_id": aid}, {"$set": {f"sig_keys.{role}": pk}})
+    return {"ok": True}
+
+
+@notaria_router.get("/agreements/{aid}/sig_keys")
+async def get_sig_keys(aid: str, email: str = Depends(current_user)):
+    a = na.find_one({"agreement_id": aid}, {"_id": 0})
+    if not a or not _member(a, email):
+        raise HTTPException(403, "Acceso restringido")
+    keys = a.get("sig_keys") or {}
+    return {"A": keys.get("A"), "B": keys.get("B")}
+
+
 def _chat_hash(aid: str) -> str:
     msgs = list(nmsg.find({"agreement_id": aid},
                           {"_id": 0, "sender": 1, "text": 1, "ct": 1, "iv": 1, "ts": 1}).sort("ts", 1).limit(500))
@@ -603,7 +647,8 @@ def _build_chat_chain(a: dict):
     aid = a["agreement_id"]
     pa = a["party_a"]
     msgs = list(nmsg.find({"agreement_id": aid},
-                          {"_id": 0, "sender": 1, "text": 1, "ct": 1, "iv": 1, "ts": 1}).sort("ts", 1).limit(500))
+                          {"_id": 0, "sender": 1, "text": 1, "ct": 1, "iv": 1, "ts": 1,
+                           "sig_b64": 1, "cts": 1}).sort("ts", 1).limit(500))
     entries = []
     prev = "0" * 64
     for i, m in enumerate(msgs):
@@ -613,7 +658,8 @@ def _build_chat_chain(a: dict):
         ts = m.get("ts", "")
         msg_hash = hashlib.sha256(f"{prev}:{content_hash}:{ts}:{role}".encode()).hexdigest()
         entries.append({"index": i, "ts": ts, "role": role,
-                        "content_hash": content_hash, "prev_hash": prev, "msg_hash": msg_hash})
+                        "content_hash": content_hash, "prev_hash": prev, "msg_hash": msg_hash,
+                        "sig_b64": m.get("sig_b64"), "cts": m.get("cts")})
         prev = msg_hash
     return entries, prev
 
@@ -638,6 +684,13 @@ async def _seal(a: dict):
     }
     if is_v2:
         proof["chat_merkle_root"] = chain_tip
+        signed_n = sum(1 for e in chain_entries if e.get("sig_b64"))
+        if signed_n:
+            proof["msg_sigs"] = {"algorithm": "Ed25519", "signed": signed_n, "total": len(chain_entries)}
+            if a.get("sig_keys"):
+                proof["sig_keys"] = a["sig_keys"]
+            if signed_n == len(chain_entries):
+                proof["v"] = "X39-NOTARIA-3"
     payload = json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
     proof_hash = hashlib.sha256(payload).hexdigest()
     proof["proof_hash"] = proof_hash
@@ -652,7 +705,7 @@ async def _seal(a: dict):
     }
     upd = {"status": "sealed", "sealed_at": proof["sealed_at"], "proof": proof, "ots": ots_doc}
     if is_v2:
-        upd["chat_chain"] = {"agreement_id": a["agreement_id"], "v": "X39-NOTARIA-2", "entries": chain_entries}
+        upd["chat_chain"] = {"agreement_id": a["agreement_id"], "v": proof["v"], "entries": chain_entries}
     na.update_one({"agreement_id": a["agreement_id"]}, {"$set": upd})
     a.update(upd)
 
@@ -936,6 +989,11 @@ for tier in ("warm", "cold"):
     print(tier.upper(), "ML-DSA-87:", "VALID" if ok else "INVALID")
 ```
 
+### 3.5 Firmas por mensaje / Per-message signatures (X39-NOTARIA-3)
+
+Si `chat_chain.json` incluye `sig_b64` en sus entradas, cada mensaje del chat fue firmado Ed25519 por su autor sobre el string `x39msg:v3:<agreement_id>:<content_hash>:<cts>`. Las pubkeys estan ancladas en `proof.json` (`sig_keys`).
+If entries carry `sig_b64`, each chat message was Ed25519-signed by its author over that exact string; the public keys are anchored inside `proof.json` (`sig_keys`).
+
 ## 4. Vinculo con el documento original / Link to the original document
 
 `proof.json` contiene `content_hash`: el SHA-256 del documento original, que SOLO las partes poseen (nunca se subio al servidor). Calcula el SHA-256 de tu copia local y comparalo.
@@ -967,6 +1025,11 @@ async def download_evidence_bundle(aid: str):
                   "signature_b64": a["pq"].get("signature_b64"),
                   "public_key_b64": a["pq"].get("public_key_b64")} if a.get("pq") else None),
         "cold": a.get("cold"),
+        "message_signatures": ({"algorithm": "Ed25519",
+                                "keys": a["proof"].get("sig_keys"),
+                                "signed": a["proof"]["msg_sigs"]["signed"],
+                                "total": a["proof"]["msg_sigs"]["total"]}
+                               if (a.get("proof") or {}).get("msg_sigs") else None),
     }
     readme = _bundle_readme(aid, proof_hash, bool(ots_raw), bool(a.get("cold")))
     entries = [("README.md", readme.encode()), ("proof.json", payload)]

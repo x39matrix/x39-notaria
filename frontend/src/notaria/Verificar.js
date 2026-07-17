@@ -1,9 +1,10 @@
 import React, { useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { CheckCircle2, XCircle, UploadCloud, FileText, Hash } from 'lucide-react';
+import { CheckCircle2, XCircle, UploadCloud, FileText, Hash, Package } from 'lucide-react';
 import { Nav } from './Nav';
 import { useLang } from './i18n';
 import { api, sha256Hex, sha256File } from './api';
+import { verifyBundle } from './bundleVerify';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -18,6 +19,31 @@ export default function Verificar() {
   const [checkedHash, setCheckedHash] = useState('');
   const [drag, setDrag] = useState(false);
   const fileRef = useRef(null);
+  const bundleRef = useRef(null);
+  const [bundleName, setBundleName] = useState('');
+  const [bundleBusy, setBundleBusy] = useState(false);
+  const [bundleReport, setBundleReport] = useState(null);
+  const [docState, setDocState] = useState(null);
+
+  const onBundle = async (f) => {
+    if (!f) return;
+    setBundleName(f.name);
+    setBundleBusy(true);
+    setBundleReport(null);
+    setDocState(null);
+    try {
+      setBundleReport(await verifyBundle(f));
+    } catch {
+      toast.error(t('ver.bundleErr'));
+    } finally {
+      setBundleBusy(false);
+    }
+  };
+
+  const onDocLink = async (f) => {
+    if (!f || !bundleReport?.proof) return;
+    setDocState((await sha256File(f)) === bundleReport.proof.content_hash ? 'ok' : 'bad');
+  };
 
   const check = async (h) => {
     setBusy(true);
@@ -62,6 +88,7 @@ export default function Verificar() {
           <button className={`nt-tab ${mode === 'file' ? 'on' : ''}`} onClick={() => { setMode('file'); setResult(null); }} data-testid="verify-tab-file"><UploadCloud size={14} strokeWidth={1.5} /> {t('ver.tabFile')}</button>
           <button className={`nt-tab ${mode === 'text' ? 'on' : ''}`} onClick={() => { setMode('text'); setResult(null); }} data-testid="verify-tab-text"><FileText size={14} strokeWidth={1.5} /> {t('ver.tabText')}</button>
           <button className={`nt-tab ${mode === 'hash' ? 'on' : ''}`} onClick={() => { setMode('hash'); setResult(null); }} data-testid="verify-tab-hash"><Hash size={14} strokeWidth={1.5} /> {t('ver.tabHash')}</button>
+          <button className={`nt-tab ${mode === 'bundle' ? 'on' : ''}`} onClick={() => { setMode('bundle'); setResult(null); }} data-testid="verify-tab-bundle"><Package size={14} strokeWidth={1.5} /> {t('ver.tabBundle')}</button>
         </div>
 
         {mode === 'file' && (
@@ -97,6 +124,66 @@ export default function Verificar() {
             <button className="nt-btn nt-btn-primary" style={{ marginTop: 14 }} onClick={submit} disabled={busy || !hashInput.trim()} data-testid="verify-hash-submit">
               {busy ? t('ver.verifying') : t('ver.verifyHashBtn')}
             </button>
+          </>
+        )}
+
+        {mode === 'bundle' && (
+          <>
+            <div
+              className={`nt-drop ${drag ? 'drag' : ''}`}
+              onClick={() => bundleRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+              onDragLeave={() => setDrag(false)}
+              onDrop={(e) => { e.preventDefault(); setDrag(false); onBundle(e.dataTransfer.files?.[0]); }}
+              data-testid="verify-bundle-dropzone"
+            >
+              <Package size={26} strokeWidth={1.5} color="var(--muted)" />
+              <p style={{ margin: '10px 0 4px', fontWeight: 600, fontSize: 14 }}>{bundleName || t('ver.bundleDrop')}</p>
+              <p className="nt-note" style={{ margin: 0 }}>{t('ver.bundleNote')}</p>
+              <input ref={bundleRef} type="file" accept=".zip" hidden onChange={(e) => onBundle(e.target.files?.[0])} data-testid="verify-bundle-input" />
+            </div>
+            {bundleBusy && <p className="nt-note nt-mono" style={{ marginTop: 14 }}>{t('ver.bverifying')}</p>}
+            {bundleReport && (
+              <div className="nt-card nt-card-pad" style={{ marginTop: 28, borderColor: bundleReport.verdict === 'fail' ? 'var(--error)' : 'var(--seal)' }} data-testid="verify-bundle-result">
+                <h2 className="nt-serif" style={{ fontSize: 22, fontWeight: 600, margin: '0 0 16px', color: bundleReport.verdict === 'fail' ? 'var(--error)' : 'var(--seal)' }} data-testid="verify-bundle-verdict">
+                  {t(`ver.bverdict.${bundleReport.verdict}`)}
+                </h2>
+                {bundleReport.checks.map((c) => (
+                  <div className="nt-kv" key={c.id} data-testid={`verify-bundle-${c.id}`}>
+                    <span>
+                      {t(`ver.bcheck.${c.id}`)}
+                      {c.count != null ? ` · ${c.count}` : ''}
+                      {c.signed != null ? ` · ${c.signed}/${c.total}` : ''}
+                    </span>
+                    <span className="nt-mono" style={{ color: c.ok ? 'var(--seal)' : 'var(--error)', fontWeight: 700 }}>{c.ok ? '✓' : '✗'}</span>
+                  </div>
+                ))}
+                {bundleReport.noCold && (
+                  <div className="nt-kv"><span>{t('ver.bcheck.mldsa_cold')}</span><span className="nt-mono" style={{ color: 'var(--muted)' }} data-testid="verify-bundle-cold-absent">—</span></div>
+                )}
+                {bundleReport.proof && (
+                  <>
+                    <div className="nt-kv"><span>ID</span><span className="nt-mono">{bundleReport.proof.agreement_id} · {bundleReport.proof.v}</span></div>
+                    <div className="nt-kv"><span>content_hash</span><span className="nt-mono" style={{ fontSize: 10 }}>{bundleReport.proof.content_hash}</span></div>
+                  </>
+                )}
+                <p className="nt-note" style={{ margin: '14px 0 0', fontSize: 11 }} data-testid="verify-bundle-ots-note">
+                  {t('ver.botsNote')}{bundleReport.otsBytes ? ` (${bundleReport.otsBytes} B)` : ''}
+                </p>
+                {bundleReport.proof && (
+                  <div style={{ marginTop: 18 }}>
+                    <div className="nt-label">{t('ver.bdocTitle')}</div>
+                    <p className="nt-note" style={{ margin: '4px 0 8px', fontSize: 11 }}>{t('ver.bdocNote')}</p>
+                    <input type="file" onChange={(e) => onDocLink(e.target.files?.[0])} data-testid="verify-bundle-doc-input" style={{ fontSize: 13 }} />
+                    {docState && (
+                      <p style={{ margin: '10px 0 0', fontWeight: 600, fontSize: 13, color: docState === 'ok' ? 'var(--seal)' : 'var(--error)' }} data-testid="verify-bundle-doc-result">
+                        {docState === 'ok' ? `✓ ${t('ver.bdocOk')}` : `✗ ${t('ver.bdocBad')}`}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
 

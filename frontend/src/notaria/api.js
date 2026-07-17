@@ -36,7 +36,7 @@ export const api = {
   logout: async () => {
     const d = await req('/auth/logout', { method: 'POST' });
     _csrf = null;
-    Object.keys(localStorage).filter((k) => k.startsWith('nt_e2e')).forEach((k) => localStorage.removeItem(k));
+    Object.keys(localStorage).filter((k) => k.startsWith('nt_e2e') || k.startsWith('nt_sig')).forEach((k) => localStorage.removeItem(k));
     return d;
   },
   listAgreements: () => req('/agreements'),
@@ -46,7 +46,9 @@ export const api = {
   sign: (id) => req(`/agreements/${id}/sign`, { method: 'POST' }),
   getMessages: (id) => req(`/agreements/${id}/messages`),
   chainTip: (id) => req(`/agreements/${id}/chain_tip`),
-  postMessage: (id, ct, iv) => req(`/agreements/${id}/messages`, { method: 'POST', body: { ct, iv } }),
+  postMessage: (id, ct, iv, extra) => req(`/agreements/${id}/messages`, { method: 'POST', body: { ct, iv, ...(extra || {}) } }),
+  publishSigKey: (id, ed25519_pub_b64) => req(`/agreements/${id}/sig_key`, { method: 'POST', body: { ed25519_pub_b64 } }),
+  getSigKeys: (id) => req(`/agreements/${id}/sig_keys`),
   publishE2EKey: (id, public_key_jwk) => req(`/agreements/${id}/e2e_key`, { method: 'POST', body: { public_key_jwk } }),
   getE2EKeys: (id) => req(`/agreements/${id}/e2e_keys`),
   publishE2EPQKey: (id, body) => req(`/agreements/${id}/e2e_pq_key`, { method: 'POST', body }),
