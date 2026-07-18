@@ -72,6 +72,11 @@ Verify offline, zero trust:
 ```bash
 pip install pqcrypto opentimestamps-client   # both optional, checks degrade gracefully
 python3 verify_bundle.py x39-evidencia-<id>.zip --document my_original.pdf
+
+# sovereign mode: verify the Bitcoin anchor against YOUR OWN node
+# (zero calendars, zero explorers — only your local proof-of-work)
+python3 verify_bundle.py x39-evidencia-<id>.zip \
+  --bitcoin-node "http://$(cat ~/.bitcoin/.cookie)@127.0.0.1:8332"
 ```
 
 ## Self-hosting
@@ -99,7 +104,9 @@ See `pi500/RUNBOOK_CEREMONIA_COLD.md` — the **executed** key ceremony (2026-07
 an honest key rotation after a lost passphrase — and `pi500/pi500_cold_signer.py`.
 Master key generated on a machine that has **never touched a network**; only the
 public key and signatures cross via USB. The server verifies, never signs COLD.
-`pi500/NODO_BTC_PI_ES.md` documents the planned sovereign Bitcoin-node verification.
+Sovereign anchor verification against your own pruned Bitcoin Core node is live:
+`verify_bundle.py --bitcoin-node` (see the command above). A separate networked
+machine runs the node — the Pi never touches a network.
 
 ## Key retirement (SEC-003)
 
