@@ -64,7 +64,9 @@ EOF`;
   const otsCmd = `pip install opentimestamps-client
 # guarda ambos archivos con el mismo nombre base:
 #   ${fileBase}   y   ${fileBase}.ots
-ots verify ${fileBase}.ots`;
+ots verify ${fileBase}.ots
+# verificacion soberana (cero terceros) contra TU propio nodo Bitcoin:
+# ots --bitcoin-node "http://$(cat ~/.bitcoin/.cookie)@127.0.0.1:8332" verify ${fileBase}.ots`;
 
   const CmdBlock = ({ title, cmd }) => (
     <div style={{ marginTop: 10 }}>
@@ -127,6 +129,13 @@ ots verify ${fileBase}.ots`;
       <div style={{ marginTop: 18 }}>
         <div className="nt-label">{t('verify.btc')}</div>
         <CmdBlock title={t('verify.runOts')} cmd={otsCmd} />
+        <p className="nt-note" style={{ marginTop: 10, fontSize: 13 }} data-testid="verify-sovereign-note">
+          {t('verify.sovereign')}{' '}
+          <a href="/success_soberano.png" target="_blank" rel="noopener noreferrer"
+            style={{ color: 'var(--seal)' }} data-testid="verify-sovereign-proof">
+            {t('verify.sovereignProof')}
+          </a>
+        </p>
       </div>
     </div>
   );

@@ -33,12 +33,6 @@ export default function Landing() {
   return (
     <div data-testid="landing-page">
       <Nav />
-      <a href="https://app.emergent.sh/showcase/fabrizio/121cef04-5dc5-49b8-a930-9877306f620b"
-        target="_blank" rel="noopener noreferrer" data-testid="contest-vote-banner"
-        style={{ display: 'block', textAlign: 'center', padding: '9px 14px', fontSize: 12,
-                 background: 'var(--seal)', color: '#fff', textDecoration: 'none', letterSpacing: '0.02em' }}>
-        {t('landing.voteContest')} →
-      </a>
       <main className="nt-wrap">
         <section className="nt-hero">
           <div>
@@ -56,6 +50,12 @@ export default function Landing() {
               </span>
               <span className="nt-mono" style={{ fontSize: 11, border: '1px solid var(--border)', color: 'var(--muted)', borderRadius: 999, padding: '4px 10px' }}>
                 {t('landing.chipTrust')}
+              </span>
+              <span className="nt-mono" data-testid="hero-chip-cold" style={{ fontSize: 11, border: '1px solid var(--border)', color: 'var(--muted)', borderRadius: 999, padding: '4px 10px' }}>
+                {t('landing.chipCold')}
+              </span>
+              <span className="nt-mono" data-testid="hero-chip-node" style={{ fontSize: 11, border: '1px solid var(--border)', color: 'var(--muted)', borderRadius: 999, padding: '4px 10px' }}>
+                {t('landing.chipNode')}
               </span>
             </div>
             <p>{t('landing.sub')}</p>
@@ -154,9 +154,9 @@ export default function Landing() {
             <Coins size={22} strokeWidth={1.5} color="var(--seal)" style={{ flexShrink: 0, marginTop: 2 }} />
             <div>
               <h2 className="nt-serif" style={{ fontSize: 22, margin: '0 0 8px', fontWeight: 600 }}>
-                {t('landing.priceTitle')} <span className="nt-pill-demo" style={{ verticalAlign: '3px', marginLeft: 6 }}>x39 · {t('landing.soon')}</span>
+                {t('landing.priceTitle')}
               </h2>
-              <p className="nt-note" style={{ fontSize: 14, maxWidth: '70ch', margin: 0 }}>{t('landing.priceX39')}</p>
+              <p className="nt-note" style={{ fontSize: 14, maxWidth: '70ch', margin: 0 }}>{t('landing.priceBody')}</p>
             </div>
           </div>
         </section>
