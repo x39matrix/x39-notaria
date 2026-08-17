@@ -104,9 +104,28 @@ See `pi500/RUNBOOK_CEREMONIA_COLD.md` — the **executed** key ceremony (2026-07
 an honest key rotation after a lost passphrase — and `pi500/pi500_cold_signer.py`.
 Master key generated on a machine that has **never touched a network**; only the
 public key and signatures cross via USB. The server verifies, never signs COLD.
-Sovereign anchor verification against your own pruned Bitcoin Core node is live:
-`verify_bundle.py --bitcoin-node` (see the command above). A separate networked
-machine runs the node — the Pi never touches a network.
+
+Sovereign anchor verification against your own Bitcoin Core node is live:
+`verify_bundle.py --bitcoin-node` (see the command above). A dedicated
+Raspberry Pi 5 (NVMe) runs the full, fully-validated Bitcoin Core node —
+the air-gapped Pi 500 signer never touches a network.
+
+## Sovereign verification record
+
+Full node, fully validated from genesis — Bitcoin Core 31.1 on dedicated hardware (Raspberry Pi 5, NVMe). Synced 2026-08-14; as of 2026-08-17: blocks = headers = 962866 · verificationprogress = 1 · initialblockdownload = false
+
+All 12 anchor blocks re-verified against this node, in under one second, with zero third parties:
+
+- Foundational tECDSA (Jun 2026): #952131 · #952148 · #952150 · #952174
+- June seals (2026-06-22): #954867 · #954873
+- First sealed agreement (2026-07-09): #957240
+- SME Fund dossier, double attestation (2026-08-07): #961469 · #961470
+- Golden Seal, triple attestation, first 100% sovereign run (2026-08-08): #961562 · #961564 · #961602
+
+Reproduce any of them:
+
+    bitcoin-cli getblockhash 952131
+    bitcoin-cli getblockheader <hash>
 
 ## Key retirement (SEC-003)
 
