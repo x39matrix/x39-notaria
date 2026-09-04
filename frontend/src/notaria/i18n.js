@@ -172,8 +172,8 @@ const STRINGS = {
 
     'join.kicker': 'Invitación',
     'join.title': 'Te han invitado a un acuerdo',
-    'join.body': 'Entra con tu cuenta de Google para quedar vinculado como Parte B. Este enlace es de un solo uso: quedará fijado a tu identidad.',
-    'join.cta': 'Entrar con Google y unirme',
+    'join.body': 'Entra con tu llave para quedar vinculado como Parte B. Este enlace es de un solo uso: quedará fijado a tu identidad.',
+    'join.cta': 'Entrar con mi llave y unirme',
     'join.progress': 'Vinculándote al acuerdo…',
 
     'ver.kicker': 'Verificación pública · sin cuenta',
@@ -408,8 +408,8 @@ const STRINGS = {
 
     'join.kicker': 'Invitation',
     'join.title': "You've been invited to an agreement",
-    'join.body': 'Sign in with your Google account to be bound as Party B. This link is single-use: it will be locked to your identity.',
-    'join.cta': 'Sign in with Google and join',
+    'join.body': 'Sign in with your key to be bound as Party B. This link is single-use: it will be locked to your identity.',
+    'join.cta': 'Sign in with my key and join',
     'join.progress': 'Linking you to the agreement…',
 
     'ver.kicker': 'Public verification · no account',
@@ -640,8 +640,8 @@ const STRINGS = {
     'ag.toastStillPending': '尚未在区块中确认。OpenTimestamps 通常需要数小时。',
     'join.kicker': '邀请',
     'join.title': '你被邀请加入一份协议',
-    'join.body': '使用你的 Google 账户登录，即可绑定为乙方。此链接仅限一次使用：将与你的身份绑定。',
-    'join.cta': '使用 Google 登录并加入',
+    'join.body': '使用你的密钥登录，即可绑定为乙方。此链接仅限一次使用：将与你的身份绑定。',
+    'join.cta': '使用我的密钥登录并加入',
     'join.progress': '正在将你绑定到协议…',
     'ver.kicker': '公开验证 · 无需账户',
     'ver.title': '验证一份证明',
@@ -849,8 +849,8 @@ const STRINGS = {
     'ag.toastStillPending': 'まだブロックで確認されていません。OpenTimestamps は通常数時間かかります。',
     'join.kicker': '招待',
     'join.title': '合意に招待されました',
-    'join.body': 'Google アカウントでログインすると、当事者 B として結び付けられます。このリンクは一回限り：あなたの身元に固定されます。',
-    'join.cta': 'Google でログインして参加',
+    'join.body': 'あなたの鍵でログインすると、当事者 B として結び付けられます。このリンクは一回限り：あなたの身元に固定されます。',
+    'join.cta': '自分の鍵でログインして参加',
     'join.progress': '合意に結び付けています…',
     'ver.kicker': '公開検証 · アカウント不要',
     'ver.title': '証明を検証する',
@@ -1084,8 +1084,8 @@ const STRINGS = {
 
     'join.kicker': 'دعوة',
     'join.title': 'تمت دعوتك إلى اتفاقية',
-    'join.body': 'ادخل بحساب Google لتُثبَّت كالطرف ب. هذا الرابط يُستخدم مرة واحدة: سيُربط بهويتك.',
-    'join.cta': 'الدخول عبر Google والانضمام',
+    'join.body': 'ادخل بمفتاحك لتُثبَّت كالطرف ب. هذا الرابط يُستخدم مرة واحدة: سيُربط بهويتك.',
+    'join.cta': 'الدخول بمفتاحي والانضمام',
     'join.progress': 'جارٍ ربطك بالاتفاقية…',
 
     'ver.kicker': 'تحقق عام · دون حساب',
