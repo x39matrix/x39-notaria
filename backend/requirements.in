@@ -9,3 +9,5 @@ requests>=2.34
 pqcrypto==0.4.0                # 1.0.0 cambia el retorno de verify() (None/raise); notaria.py aun asume bool
 reportlab>=5.0                 # certificado PDF (import perezoso en notaria.py)
 opentimestamps-client==0.7.2   # CLI `ots` usado por hwg/crypto.py; trae opentimestamps + python-bitcoinlib
+cryptography>=46               # Ed25519: verificacion del reto de login (notaria.py)
+slowapi>=0.1.9                 # rate-limit (server.py, ratelimit.py)
