@@ -1213,6 +1213,8 @@ export const LANGS = [
 
 export function LangProvider({ children }) {
   const [lang, setLangState] = useState(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('lang');
+    if (LANGS.some((l) => l.code === fromUrl)) { localStorage.setItem('nt_lang', fromUrl); return fromUrl; }
     const saved = localStorage.getItem('nt_lang');
     return LANGS.some((l) => l.code === saved) ? saved : 'en';
   });

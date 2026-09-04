@@ -2,8 +2,25 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { api } from './api';
+import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/500.css';
+import '@fontsource/jetbrains-mono/700.css';
+import '@fontsource/chivo/400.css';
+import '@fontsource/chivo/700.css';
+import '@fontsource/chivo/900.css';
+import '@fontsource/cormorant-garamond/400.css';
+import '@fontsource/cormorant-garamond/400-italic.css';
+import '@fontsource/cormorant-garamond/500.css';
+import '@fontsource/cormorant-garamond/600.css';
+import '@fontsource/cormorant-garamond/700.css';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
+import '@fontsource/manrope/400.css';
+import '@fontsource/manrope/500.css';
+import '@fontsource/manrope/600.css';
+import '@fontsource/manrope/700.css';
 import './notaria.css';
-import { LangProvider, useLang } from './i18n';
+import { LangProvider, useLang, LANGS } from './i18n';
 import Landing from './Landing';
 import Panel from './Panel';
 import Crear from './Crear';
@@ -28,6 +45,23 @@ function Protected({ children }) {
   }
   return children;
 }
+function SeoLinks() {
+  const { lang } = useLang();
+  const location = useLocation();
+  useEffect(() => {
+    const base = 'https://x39matrix.org' + location.pathname;
+    const set = (rel, hreflang, href) => {
+      const sel = hreflang ? `link[rel="${rel}"][hreflang="${hreflang}"]` : `link[rel="${rel}"]`;
+      let el = document.head.querySelector(sel);
+      if (!el) { el = document.createElement('link'); el.rel = rel; if (hreflang) el.hreflang = hreflang; document.head.appendChild(el); }
+      el.href = href;
+    };
+    set('canonical', null, lang === 'en' ? base : `${base}?lang=${lang}`);
+    LANGS.forEach((l) => set('alternate', l.code, l.code === 'en' ? base : `${base}?lang=${l.code}`));
+    set('alternate', 'x-default', base);
+  }, [lang, location.pathname]);
+  return null;
+}
 function NotariaInner() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -41,6 +75,7 @@ function NotariaInner() {
     <AuthCtx.Provider value={{ user, setUser, loading }}>
       <div className="nt">
         <Toaster position="top-center" toastOptions={{ style: { fontFamily: 'Manrope, sans-serif' } }} />
+        <SeoLinks />
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/entrar" element={<Entrar />} />
