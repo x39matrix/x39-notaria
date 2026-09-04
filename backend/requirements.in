@@ -1,0 +1,11 @@
+# X-39 Notaria backend — dependencias directas reales (2026-09-05).
+# Lock reproducible: requirements.txt (pip freeze de un venv limpio; pip-audit sin avisos).
+fastapi>=0.141
+uvicorn>=0.52
+pydantic>=2.13
+python-dotenv>=1.2
+pymongo>=4.18
+requests>=2.34
+pqcrypto==0.4.0                # 1.0.0 cambia el retorno de verify() (None/raise); notaria.py aun asume bool
+reportlab>=5.0                 # certificado PDF (import perezoso en notaria.py)
+opentimestamps-client==0.7.2   # CLI `ots` usado por hwg/crypto.py; trae opentimestamps + python-bitcoinlib
