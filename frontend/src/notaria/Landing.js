@@ -6,7 +6,7 @@ import { useAuth } from './NotariaApp';
 import { useLang } from './i18n';
 import { api, goLogin } from './api';
 
-const DEMO_CERT_ID = 'demo0000demo0001';
+const DEMO_CERT_ID = '31e1cf09a5b2a74cd978';
 const STEP_ICONS = [FileText, PenLine, Anchor];
 
 export default function Landing() {
@@ -80,7 +80,7 @@ export default function Landing() {
             </div>
             <div className="nt-label">{t('landing.certHashLabel')}</div>
             <div className="nt-mono" style={{ fontSize: 11, marginBottom: 14 }} data-testid="hero-cert-hash">
-              {demoProof ? demoProof.content_hash : '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08'}
+              {demoProof ? demoProof.content_hash : 'eda1fa21b0a3c67ddaede7f84bd2641810594670a1438cd955f88fa6098d6967'}
             </div>
             <div className="nt-label">{t('landing.certAnchorLabel')}</div>
             {demoProof ? (
@@ -177,8 +177,11 @@ export default function Landing() {
       <footer style={{ borderTop: '1px solid var(--border)', padding: '24px 0' }}>
         <div className="nt-wrap" style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
           <span className="nt-note">{t('landing.footer')}</span>
-          <span className="nt-note nt-mono">
-            OpenTimestamps · SHA-256 · ML-DSA-87
+          <span className="nt-note nt-mono" style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+            <a href="https://github.com/x39matrix/x39-notaria" target="_blank" rel="noreferrer" style={{ color: 'inherit' }} data-testid="footer-github">{t('footer.github')}</a>
+            <a href="mailto:grants@x39matrix.org" style={{ color: 'inherit' }} data-testid="footer-contact">{t('footer.contact')}</a>
+            <Link to="/privacidad" style={{ color: 'inherit' }} data-testid="footer-privacy">{t('footer.privacy')}</Link>
+            <span>OpenTimestamps · SHA-256 · ML-DSA-87</span>
           </span>
         </div>
       </footer>

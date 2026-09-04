@@ -29,7 +29,7 @@ export default function Certificado() {
     return (
       <div><Nav />
         <main className="nt-wrap nt-center"><div className="nt-card nt-card-pad" style={{ textAlign: 'center' }}>
-          <p className="nt-serif" style={{ fontSize: 22 }} data-testid="cert-error">{error}</p>
+          <p className="nt-serif" style={{ fontSize: 22 }} data-testid="cert-error">{/no encontrada|not found/i.test(error) ? t('cert.notFound') : error}</p>
           <Link to="/verificar" className="nt-btn nt-btn-ghost">{t('cert.goVerify')}</Link>
         </div></main>
       </div>

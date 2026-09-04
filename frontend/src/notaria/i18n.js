@@ -35,7 +35,7 @@ const STRINGS = {
     'landing.s2t': 'Acuerden y acepten',
     'landing.s2d': 'Un chat cifrado en el navegador entre las dos partes. Al aceptar ambas, la conversación se congela y su hash entra en la prueba.',
     'landing.s3t': 'Queda sellado en Bitcoin',
-    'landing.s3d': 'Un certificado público que cualquiera puede verificar, sin cuenta y sin costo.',
+    'landing.s3d': 'Un certificado público que cualquiera puede verificar, sin cuenta y sin coste.',
     'landing.forWhoTitle': 'Para quién',
     'landing.forWho': 'Periodistas, fuentes y organizaciones de derechos humanos que necesitan demostrar que un documento existía —y qué decía— antes de que alguien lo niegue, lo confisque o lo borre, sin depender de una plataforma que pueda ser presionada o apagada. También freelancers y clientes, pymes que cierran tratos, y quien quiera fechar una idea o patente antes de compartirla.',
     'landing.priceTitle': 'Precio',
@@ -233,8 +233,18 @@ const STRINGS = {
     'cert.share': 'Compartir',
     'cert.shareCopied': 'Enlace público copiado',
     'cert.indepNote': 'Verificación independiente: descarga el payload .json y la prueba .ots y valídalos con cualquier cliente OpenTimestamps. No necesitas confiar en nosotros.',
-    'cert.legalScope': 'Alcance legal honesto: esta prueba constituye evidencia criptográfica de existencia, integridad y fecha (sello de tiempo en Bitcoin + firma electrónica avanzada, eIDAS art. 3(11)). No es una firma cualificada (QES) ni sustituye a un notario público. No sustituye a la notaría pública, a una firma electrónica cualificada ni a un sello de tiempo cualificado eIDAS. No sustituye a la notaría pública, a una firma electrónica cualificada ni a un sello de tiempo cualificado eIDAS.',
+    'cert.legalScope': 'Alcance legal honesto: esta prueba constituye evidencia criptográfica de existencia, integridad y fecha (sello de tiempo en Bitcoin + firma electrónica avanzada, eIDAS art. 3(11)). No es una firma cualificada (QES) y no sustituye a la notaría pública, a una firma electrónica cualificada ni a un sello de tiempo cualificado eIDAS.',
     'footer.github': 'Código y evidencia',
+    'footer.contact': 'Contacto',
+    'footer.privacy': 'Privacidad',
+    'cert.notFound': 'Prueba no encontrada',
+    'meta.title': 'X-39 Notaría — Acuerdos sellados en Bitcoin',
+    'meta.desc': 'Prueba criptográfica de contenido y fecha vía OpenTimestamps, con co-firma post-cuántica ML-DSA-87. Gratis, verificable por cualquiera, para siempre.',
+    'privacy.title': 'Privacidad y datos',
+    'privacy.p1': 'Qué guardamos: el hash SHA-256 de lo que sellas, el título del acuerdo, las claves públicas de las partes, la fecha de sellado y la prueba OpenTimestamps. Si escribes el texto del acuerdo en la web, ese texto se guarda para habilitar el acuerdo; si subes un archivo, el archivo nunca sale de tu dispositivo: solo viaja su hash.',
+    'privacy.p2': 'Qué no guardamos: ni correo, ni contraseña, ni nombre. Tu identidad es una llave criptográfica que vive en tu navegador. El chat entre las partes se cifra en el navegador y el servidor solo almacena texto cifrado.',
+    'privacy.p3': 'Cookies: una cookie de sesión (httponly, 7 días) tras entrar con tu llave, y la preferencia de idioma en tu navegador. Sin analítica, sin rastreadores, sin terceros: esta web no carga nada de otros dominios.',
+    'privacy.p4': 'Dónde y quién: el servidor está en España y lo opera José Luis Olivares (grants@x39matrix.org). Las pruebas ancladas en Bitcoin son públicas por diseño y contienen solo hashes, nunca el documento. Una prueba ya anclada no puede borrarse de la cadena de Bitcoin. Para cualquier consulta sobre tus datos: grants@x39matrix.org.',
     'cert.goVerify': 'Ir a verificación',
   },
   en: {
@@ -469,8 +479,18 @@ const STRINGS = {
     'cert.share': 'Share',
     'cert.shareCopied': 'Public link copied',
     'cert.indepNote': "Independent verification: download the .json payload and the .ots proof and validate them with any OpenTimestamps client. You don't need to trust us.",
-    'cert.legalScope': 'Honest legal scope: this proof constitutes cryptographic evidence of existence, integrity and date (Bitcoin timestamp + advanced electronic signature, eIDAS art. 3(11)). It is not a qualified signature (QES) and does not replace a public notary. It does not replace a public notary, a qualified electronic signature or a qualified eIDAS timestamp. It does not replace a public notary, a qualified electronic signature or a qualified eIDAS timestamp.',
+    'cert.legalScope': 'Honest legal scope: this proof constitutes cryptographic evidence of existence, integrity and date (Bitcoin timestamp + advanced electronic signature, eIDAS art. 3(11)). It is not a qualified signature (QES) and does not replace a public notary, a qualified electronic signature or a qualified eIDAS timestamp.',
     'footer.github': 'Code & evidence',
+    'footer.contact': 'Contact',
+    'footer.privacy': 'Privacy',
+    'cert.notFound': 'Proof not found',
+    'meta.title': 'X-39 Notaría — Agreements sealed on Bitcoin',
+    'meta.desc': 'Cryptographic proof of content and date via OpenTimestamps, with a post-quantum ML-DSA-87 co-signature. Free, verifiable by anyone, forever.',
+    'privacy.title': 'Privacy and data',
+    'privacy.p1': 'What we store: the SHA-256 hash of what you seal, the agreement title, the parties\' public keys, the sealing date and the OpenTimestamps proof. If you type the agreement text on the site, that text is stored to enable the agreement; if you upload a file, the file never leaves your device: only its hash travels.',
+    'privacy.p2': 'What we do not store: no e-mail, no password, no name. Your identity is a cryptographic key that lives in your browser. The chat between the parties is encrypted in the browser; the server only stores ciphertext.',
+    'privacy.p3': 'Cookies: one session cookie (httponly, 7 days) after signing in with your key, and your language preference in your browser. No analytics, no trackers, no third parties: this site loads nothing from other domains.',
+    'privacy.p4': 'Where and who: the server runs in Spain and is operated by José Luis Olivares (grants@x39matrix.org). Proofs anchored in Bitcoin are public by design and contain only hashes, never the document. A proof already anchored cannot be removed from the Bitcoin chain. For any question about your data: grants@x39matrix.org.',
     'cert.goVerify': 'Go to verification',
   },
   zh: {
@@ -682,6 +702,16 @@ const STRINGS = {
     'cert.legalScope': '诚实的法律范围：此证明构成存在性、完整性和日期的加密证据（比特币时间戳 + 高级电子签名，eIDAS 第 3(11) 条）。它不是合格电子签名（QES），不能替代公证人。 它不能替代公证处、合格电子签名或符合 eIDAS 的合格时间戳。',
     'cert.goVerify': '前往验证',
     'footer.github': '代码与证据',
+    'footer.contact': '联系',
+    'footer.privacy': '隐私',
+    'cert.notFound': '未找到证明',
+    'meta.title': 'X-39 Notaría — 锚定于比特币的协议',
+    'meta.desc': '通过 OpenTimestamps 提供内容与日期的密码学证明，并带有后量子 ML-DSA-87 联合签名。免费，任何人可验证，永久有效。',
+    'privacy.title': '隐私与数据',
+    'privacy.p1': '我们存储什么：你所封存内容的 SHA-256 哈希、协议标题、双方的公钥、封存日期以及 OpenTimestamps 证明。如果你在网站上输入协议文本，该文本会被保存以启用协议；如果你上传文件，文件永远不会离开你的设备：只传输其哈希。',
+    'privacy.p2': '我们不存储什么：没有电子邮件、没有密码、没有姓名。你的身份是保存在浏览器中的密码学密钥。双方之间的聊天在浏览器中加密；服务器只保存密文。',
+    'privacy.p3': 'Cookie：使用密钥登录后有一个会话 Cookie（httponly，7 天），以及保存在浏览器中的语言偏好。没有分析、没有跟踪器、没有第三方：本网站不从其他域名加载任何内容。',
+    'privacy.p4': '在哪里、由谁：服务器位于西班牙，由 José Luis Olivares 运营（grants@x39matrix.org）。锚定于比特币的证明在设计上是公开的，只包含哈希，绝不包含文档。已锚定的证明无法从比特币链上移除。关于你的数据的任何问题：grants@x39matrix.org。',
   },
   ja: {
     'nav.verify': '検証',
@@ -911,6 +941,16 @@ const STRINGS = {
     'cert.legalScope': '誠実な法的範囲：この証明は、存在・完全性・日付の暗号学的証拠です（ビットコインタイムスタンプ + 先進電子署名、eIDAS 第 3 条(11)）。適格電子署名（QES）ではなく、公証人の代わりにはなりません。 公証人、適格電子署名、eIDAS 適格タイムスタンプの代わりにはなりません。',
     'cert.goVerify': '検証へ',
     'footer.github': 'コードと証拠',
+    'footer.contact': '連絡先',
+    'footer.privacy': 'プライバシー',
+    'cert.notFound': '証明が見つかりません',
+    'meta.title': 'X-39 Notaría — ビットコインに封印された合意',
+    'meta.desc': 'OpenTimestamps による内容と日付の暗号学的証明。耐量子 ML-DSA-87 共同署名付き。無料、誰でも検証可能、永久に。',
+    'privacy.title': 'プライバシーとデータ',
+    'privacy.p1': '保存するもの：封印する内容の SHA-256 ハッシュ、合意のタイトル、当事者の公開鍵、封印日、OpenTimestamps の証明。サイト上で合意の本文を入力した場合、その本文は合意を有効にするために保存されます。ファイルをアップロードした場合、ファイルはデバイスから出ません。ハッシュだけが送られます。',
+    'privacy.p2': '保存しないもの：メールアドレス、パスワード、氏名。あなたの身元はブラウザに保存された暗号鍵です。当事者間のチャットはブラウザで暗号化され、サーバーは暗号文のみを保存します。',
+    'privacy.p3': 'Cookie：鍵でログインした後のセッション Cookie（httponly、7 日間）と、ブラウザ内の言語設定のみ。アナリティクスもトラッカーも第三者もありません。このサイトは他のドメインから何も読み込みません。',
+    'privacy.p4': '場所と運営者：サーバーはスペインにあり、José Luis Olivares（grants@x39matrix.org）が運営しています。ビットコインにアンカーされた証明は設計上公開であり、ハッシュのみを含み、文書は含みません。すでにアンカーされた証明はビットコインのチェーンから削除できません。データに関するご質問は grants@x39matrix.org まで。',
   },
   ar: {
     'nav.verify': 'تحقّق',
@@ -1148,6 +1188,16 @@ const STRINGS = {
     'cert.legalScope': 'نطاق قانوني صادق: هذه الشهادة دليل تشفيري على الوجود والسلامة والتاريخ (ختم بيتكوين الزمني + توقيع إلكتروني متقدم، eIDAS المادة 3(11)). ليست توقيعًا إلكترونيًا مؤهلًا (QES) ولا تحل محل كاتب العدل. لا يحل محل كاتب العدل، ولا التوقيع الإلكتروني المؤهل، ولا الختم الزمني المؤهل وفق eIDAS.',
     'cert.goVerify': 'اذهب للتحقق',
     'footer.github': 'الشيفرة والأدلة',
+    'footer.contact': 'اتصل بنا',
+    'footer.privacy': 'الخصوصية',
+    'cert.notFound': 'لم يُعثر على الإثبات',
+    'meta.title': 'X-39 Notaría — اتفاقيات مختومة على بيتكوين',
+    'meta.desc': 'إثبات تشفيري للمحتوى والتاريخ عبر OpenTimestamps، مع توقيع مشترك ما بعد الكم ML-DSA-87. مجاني، يمكن لأي شخص التحقق منه، إلى الأبد.',
+    'privacy.title': 'الخصوصية والبيانات',
+    'privacy.p1': 'ما نخزّنه: بصمة SHA-256 لما تختمه، وعنوان الاتفاقية، والمفاتيح العامة للطرفين، وتاريخ الختم، وإثبات OpenTimestamps. إذا كتبت نص الاتفاقية في الموقع، يُحفظ هذا النص لتفعيل الاتفاقية؛ وإذا رفعت ملفًا، فإن الملف لا يغادر جهازك أبدًا: تُرسل بصمته فقط.',
+    'privacy.p2': 'ما لا نخزّنه: لا بريد إلكتروني، ولا كلمة مرور، ولا اسم. هويتك مفتاح تشفيري يعيش في متصفحك. المحادثة بين الطرفين مشفّرة في المتصفح، والخادم يخزّن النص المشفّر فقط.',
+    'privacy.p3': 'ملفات تعريف الارتباط: ملف جلسة واحد (httponly، 7 أيام) بعد الدخول بمفتاحك، وتفضيل اللغة في متصفحك. لا تحليلات، ولا متتبّعات، ولا أطراف ثالثة: هذا الموقع لا يحمّل شيئًا من نطاقات أخرى.',
+    'privacy.p4': 'أين ومن: الخادم في إسبانيا ويديره José Luis Olivares (grants@x39matrix.org). الإثباتات المثبّتة على بيتكوين علنية بحكم التصميم ولا تحتوي إلا على بصمات، لا على المستند أبدًا. لا يمكن إزالة إثبات مثبّت من سلسلة بيتكوين. لأي سؤال عن بياناتك: grants@x39matrix.org.',
   },
 };
 
@@ -1175,6 +1225,12 @@ export function LangProvider({ children }) {
   useEffect(() => {
     document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
     document.documentElement.lang = lang;
+    document.title = t('meta.title');
+    const md = document.querySelector('meta[name="description"]');
+    if (md) md.setAttribute('content', t('meta.desc'));
+    const og = document.querySelector('meta[property="og:title"]');
+    if (og) og.setAttribute('content', t('meta.title'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lang]);
   return <LangCtx.Provider value={{ lang, setLang, t }}>{children}</LangCtx.Provider>;
 }
