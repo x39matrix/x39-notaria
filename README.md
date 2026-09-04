@@ -39,7 +39,7 @@ pi500/     air-gapped COLD signer (pi500_cold_signer.py) + runbooks (ES)
 verify_bundle.py      standalone offline verifier for evidence bundles
 ```
 
-- Auth: Emergent-managed Google OAuth (server-side session exchange, httpOnly cookie, CSRF token required for signing).
+- Auth: Google OAuth (server-side session exchange, httpOnly cookie, CSRF token required for signing).
 - All API routes are prefixed `/api/notaria/*`.
 - Rate limiting: in-memory sliding window per IP+scope (single-process deployment).
 

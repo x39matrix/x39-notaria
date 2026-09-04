@@ -7,8 +7,9 @@ Verifica un bundle de evidencia (x39-evidencia-<aid>.zip) SIN confiar en X-39:
   2. Campos cruzados: agreement_id / content_hash / sealed_at coinciden
   3. Cadena de chat : (X39-NOTARIA-2/3) continuidad + msg_hash + tip == chat_merkle_root
   4. Firmas mensaje : (X39-NOTARIA-3) Ed25519 por mensaje, pubkeys ancladas en proof.json
-  5. Firma soberana : ML-DSA-87 (FIPS-204) COLD sobre los bytes de proof.json
-                      (+ WARM historica si el bundle la incluye)
+  5. Firma soberana : ML-DSA-87 (FIPS-204) COLD sobre los bytes de proof.json, con la
+                      clave PINEADA en TRUSTED_COLD_FINGERPRINTS (ver abajo)
+                      (+ WARM historica si el bundle la incluye: informativa, NO soberana)
   6. Ancla Bitcoin  : ots verify proof.json.ots -f proof.json
                       (--bitcoin-node URL: contrasta contra TU nodo, cero terceros)
 
@@ -33,6 +34,34 @@ from typing import Any
 ML_DSA_87_PK_LEN = 2592
 ML_DSA_87_SIG_LEN = 4627
 EXIT_OK, EXIT_INTEGRITY, EXIT_SIG, EXIT_OTS, EXIT_IO = 0, 1, 2, 3, 4
+
+# ---------------------------------------------------------------------------
+# RAIZ DE CONFIANZA DE LA CO-FIRMA SOBERANA
+#
+# Huellas sha256 de las claves publicas ML-DSA-87 generadas en la Raspberry Pi
+# 500 aislada (sin red). Una co-firma "cold" SOLO acredita autoridad soberana de
+# X-39 si la clave publica que la verifica reduce a una de estas huellas.
+#
+# Por que esta pineado y no se lee del bundle: signatures.json NO esta cubierto
+# por el ancla OpenTimestamps. Comprobar la huella contra la clave que viene en
+# el mismo fichero es circular — cualquiera puede generar su par de claves,
+# firmar un proof.json falso, incluir su clave y su huella, anclarlo el mismo, y
+# obtener un "VALID" con co-firma aparentemente soberana.
+#
+# Es un CONJUNTO a proposito: permite rotar la clave COLD anadiendo la nueva sin
+# invalidar los sellos ya emitidos con la anterior.
+#
+# Verifica esta huella por un canal independiente de este fichero antes de
+# confiar en el. Si no la has contrastado, no has verificado nada: te has fiado.
+# ---------------------------------------------------------------------------
+TRUSTED_COLD_FINGERPRINTS = {
+    # Pi 500 aislada — clave COLD original (en servicio desde 2026-08)
+    "8453a25a41d6fe8fcb5647600f042a7c303daaca79b80928534025711981c6a1",
+}
+
+
+class SigError(Exception):
+    """Fallo en una co-firma. El llamante decide si es fatal (COLD) o informativo (WARM)."""
 
 
 def die(code: int, msg: str) -> None:
@@ -81,61 +110,123 @@ def verify_cross_fields(proof: dict[str, Any], sigs: dict[str, Any]) -> None:
             die(EXIT_INTEGRITY, f"{field} difiere: proof={pv} signatures={sv}")
 
 
-def b64_decode_exact(label: str, b64: str, expected_len: int) -> bytes:
+def b64_decode_strict(label: str, b64: str, expected_len: int) -> bytes:
+    """Igual que b64_decode_exact pero lanza SigError en vez de terminar el proceso."""
     try:
         raw = base64.b64decode(b64, validate=True)
     except Exception as e:
-        die(EXIT_SIG, f"{label}: base64 invalido: {e}")
+        raise SigError(f"{label}: base64 invalido: {e}")
     if len(raw) != expected_len:
-        die(EXIT_SIG, f"{label}: tamano {len(raw)} bytes, esperado {expected_len}")
+        raise SigError(f"{label}: tamano {len(raw)} bytes, esperado {expected_len}")
     return raw
 
 
-def verify_one_signature(label: str, block: dict[str, Any], proof_bytes: bytes) -> None:
-    algo = str(block.get("algorithm", ""))
-    if "ML-DSA-87" not in algo:
-        die(EXIT_SIG, f"{label}: algoritmo inesperado: {algo}")
-    pk_b64, sig_b64 = block.get("public_key_b64"), block.get("signature_b64")
-    if not pk_b64 or not sig_b64:
-        die(EXIT_SIG, f"{label}: falta public_key_b64 o signature_b64")
-    pk = b64_decode_exact(f"{label}.public_key", pk_b64, ML_DSA_87_PK_LEN)
-    sig = b64_decode_exact(f"{label}.signature", sig_b64, ML_DSA_87_SIG_LEN)
-    fp_claimed = block.get("fingerprint")
-    if fp_claimed:
-        fp_computed = hashlib.sha256(pk).hexdigest()
-        if fp_computed != fp_claimed:
-            die(EXIT_SIG, f"{label}: fingerprint mismatch: claimed={fp_claimed} computed={fp_computed}")
+def b64_decode_exact(label: str, b64: str, expected_len: int) -> bytes:
+    try:
+        return b64_decode_strict(label, b64, expected_len)
+    except SigError as e:
+        die(EXIT_SIG, str(e))
+
+
+def mldsa_verify_ok(pk: bytes, msg: bytes, sig: bytes) -> bool:
+    """Verifica ML-DSA-87 normalizando las convenciones de pqcrypto.
+
+    Las versiones no coinciden en como reportan el resultado:
+      - pqcrypto 1.0.0 : devuelve None si la firma es valida y LANZA
+                         InvalidSignatureError si no lo es.
+      - versiones previas: devuelven True/False.
+
+    Un `if not verify(...)` rechaza las firmas BUENAS bajo la primera convencion.
+    Aqui solo se considera fallo la excepcion o un False explicito; el llamante
+    debe ademas ejecutar un control negativo con una firma alterada.
+    """
     try:
         from pqcrypto.sign import ml_dsa_87
     except ImportError:
         die(EXIT_IO, "pqcrypto no disponible. Instala: pip install pqcrypto")
     try:
-        valid = ml_dsa_87.verify(pk, proof_bytes, sig)
-    except Exception as e:
-        die(EXIT_SIG, f"{label}: ml_dsa_87.verify excepcion: {e}")
-    if not valid:
-        die(EXIT_SIG, f"{label}: ML-DSA-87.verify FALLO")
+        result = ml_dsa_87.verify(pk, msg, sig)
+    except Exception:
+        return False
+    return result is not False
 
 
-def verify_signatures(proof_bytes: bytes, sigs_raw: bytes) -> list[str]:
+def check_ml_dsa_signature(label: str, block: dict[str, Any], proof_bytes: bytes,
+                           trusted: set[str] | None = None) -> str:
+    """Verifica una co-firma ML-DSA-87 sobre los bytes crudos de proof.json.
+
+    Si `trusted` es un conjunto de huellas, la clave publica del bundle solo se
+    acepta cuando sha256(pk) pertenece a ese conjunto: ahi esta la diferencia
+    entre "la firma es consistente consigo misma" y "la firma es de X-39".
+
+    Devuelve la huella sha256 de la clave publica usada. Lanza SigError.
+    """
+    algo = str(block.get("algorithm", ""))
+    if "ML-DSA-87" not in algo:
+        raise SigError(f"{label}: algoritmo inesperado: {algo}")
+    pk_b64, sig_b64 = block.get("public_key_b64"), block.get("signature_b64")
+    if not pk_b64 or not sig_b64:
+        raise SigError(f"{label}: falta public_key_b64 o signature_b64")
+    pk = b64_decode_strict(f"{label}.public_key", pk_b64, ML_DSA_87_PK_LEN)
+    sig = b64_decode_strict(f"{label}.signature", sig_b64, ML_DSA_87_SIG_LEN)
+
+    fp_computed = hashlib.sha256(pk).hexdigest()
+    fp_claimed = block.get("fingerprint")
+    if fp_claimed and fp_computed != fp_claimed:
+        # Coherencia interna del bundle. NO acredita nada por si sola: ambos
+        # valores salen del mismo fichero no anclado.
+        raise SigError(f"{label}: fingerprint mismatch: claimed={fp_claimed} computed={fp_computed}")
+    if trusted is not None and fp_computed not in trusted:
+        raise SigError(
+            f"{label}: clave NO reconocida. La huella {fp_computed} no figura en "
+            f"TRUSTED_COLD_FINGERPRINTS. La firma puede ser valida sobre si misma, "
+            f"pero NO procede de la autoridad soberana de X-39."
+        )
+    if not mldsa_verify_ok(pk, proof_bytes, sig):
+        raise SigError(f"{label}: ML-DSA-87.verify FALLO")
+    # Control negativo obligatorio: la libreria instalada DEBE rechazar una firma
+    # alterada. Si acepta las dos, no esta verificando nada y su "valida" no vale.
+    tampered = bytearray(sig)
+    tampered[0] ^= 0x01
+    if mldsa_verify_ok(pk, proof_bytes, bytes(tampered)):
+        die(EXIT_IO, f"{label}: la instalacion de pqcrypto acepta una firma ALTERADA. "
+                     "No se puede confiar en su veredicto: revisa la libreria.")
+    return fp_computed
+
+
+def verify_signatures(proof_bytes: bytes, sigs_raw: bytes) -> tuple[list[str], str | None]:
     sigs = parse_json_bytes(sigs_raw, "signatures.json")
     verify_proof_hash(proof_bytes, sigs)
     proof = parse_json_bytes(proof_bytes, "proof.json")
     verify_cross_fields(proof, sigs)
-    notes = []
+    notes: list[str] = []
+    cold_fp: str | None = None
     cold = sigs.get("cold")
     if cold:
-        verify_one_signature("cold", cold, proof_bytes)
+        try:
+            cold_fp = check_ml_dsa_signature("cold", cold, proof_bytes,
+                                             trusted=TRUSTED_COLD_FINGERPRINTS)
+        except SigError as e:
+            die(EXIT_SIG, str(e))
     else:
         # SEC-003: la co-firma COLD se aplica post-sellado (sneakernet); su ausencia no es
         # detectable criptograficamente. Se advierte, no se falla: el ancla OTS sigue siendo la prueba.
         notes.append("SIN co-firma soberana COLD (el operador aun no co-firmo este sello)")
     warm = sigs.get("warm")
     if warm is not None:
-        verify_one_signature("warm", warm, proof_bytes)
+        # SEC-003: la clave WARM vivia en el servidor y fue retirada. Nunca fue soberana:
+        # quien controlase el servidor podia firmar con ella. Se informa, no se pinea y
+        # no altera el veredicto.
+        try:
+            warm_fp = check_ml_dsa_signature("warm", warm, proof_bytes)
+            notes.append(f"co-firma WARM historica presente y consistente ({warm_fp[:16]}...); "
+                         "informativa, NO acredita autoridad (clave de servidor retirada, SEC-003)")
+        except SigError as e:
+            notes.append(f"co-firma WARM historica NO valida: {e}; informativa, sin efecto "
+                         "sobre el veredicto (clave de servidor retirada, SEC-003)")
     if not cold and not warm:
         notes.append("sin ninguna firma ML-DSA-87; la evidencia se sostiene en OTS/Bitcoin + cadena")
-    return notes
+    return notes, cold_fp
 
 
 def verify_content_hash(proof: dict[str, Any], content_path: Path | None) -> None:
@@ -253,7 +344,7 @@ def main() -> None:
     verify_content_hash(proof, args.content)
     verify_chat_chain_v2(files, proof)
     verify_msg_sigs(files, proof)
-    notes = verify_signatures(proof_bytes, files["signatures.json"])
+    notes, cold_fp = verify_signatures(proof_bytes, files["signatures.json"])
     if not args.skip_ots:
         verify_ots(proof_bytes, files["proof.json.ots"], args.bitcoin_node)
     print("VALID" + (" (OTS omitido)" if args.skip_ots else ""))
@@ -270,6 +361,8 @@ def main() -> None:
         print(f"  chat_root:   {proof.get('chat_merkle_root')}  ({len(json.loads(files['chat_chain.json'])['entries'])} mensajes encadenados)")
     if proof.get("msg_sigs"):
         print(f"  msg_sigs:    Ed25519 {proof['msg_sigs']['signed']}/{proof['msg_sigs']['total']} verificadas")
+    if cold_fp:
+        print(f"  co-firma:    COLD ML-DSA-87 valida · clave PINEADA {cold_fp}")
     print(f"  sealed_at:   {proof.get('sealed_at')}  (informativo; la fecha real es OTS/Bitcoin)")
     sys.exit(EXIT_OK)
 

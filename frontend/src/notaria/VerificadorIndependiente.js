@@ -52,14 +52,34 @@ export const VerificadorIndependiente = ({ proof, id }) => {
   }, [id, proof.proof_hash]);
 
   const fileBase = `x39-prueba-${id}.json`;
+  // Huella de la clave COLD soberana de X-39. Contrastala fuera de banda (esta web NO
+  // basta: un bundle falso puede traer su propia huella coherente consigo misma).
+  const COLD_FP = '8453a25a41d6fe8fcb5647600f042a7c303daaca79b80928534025711981c6a1';
   const pySnippet = (pk, sig, tier) => `pip install pqcrypto
 python3 - <<'EOF'
-import base64
+import base64, hashlib
 from pqcrypto.sign import ml_dsa_87 as m
 payload = open("${fileBase}", "rb").read()
 pk  = base64.b64decode("${pk}")
 sig = base64.b64decode("${sig}")
-print("${tier} ML-DSA-87 valid:", m.verify(pk, payload, sig))
+
+def verify_ok(pk, msg, s):
+    # pqcrypto >= 1.0.0 devuelve None si la firma es valida y LANZA si no;
+    # versiones previas devuelven True/False. Cubre ambas convenciones.
+    try:
+        return m.verify(pk, msg, s) is not False
+    except Exception:
+        return False
+
+valid = verify_ok(pk, payload, sig)
+bad = bytearray(sig); bad[0] ^= 1        # control negativo: una firma alterada DEBE fallar
+if valid and verify_ok(pk, payload, bytes(bad)):
+    print("AVISO: esta instalacion acepta una firma ALTERADA; veredicto no fiable"); valid = False
+fp = hashlib.sha256(pk).hexdigest()
+print("${tier} ML-DSA-87:", "VALID" if valid else "INVALID", "| fp:", fp)
+${tier === 'COLD'
+  ? `print("clave COLD", "RECONOCIDA de X-39" if fp == "${COLD_FP}" else "NO RECONOCIDA: NO es la autoridad de X-39")`
+  : `print("WARM informativa: clave de servidor retirada 2026-07-16 (SEC-003), no acredita autoria")`}
 EOF`;
   const otsCmd = `pip install opentimestamps-client
 # guarda ambos archivos con el mismo nombre base:
@@ -113,6 +133,10 @@ ots verify ${fileBase}.ots
         {proof.cold ? (
           <>
             <Copyable label={t('verify.fp')} value={proof.cold.fingerprint} testid="verify-cold-fp" />
+            <p className="nt-note" style={{ marginTop: 4, fontSize: 12 }} data-testid="verify-cold-expected">
+              Huella COLD esperada / expected: <span className="nt-mono" style={{ wordBreak: 'break-all' }}>{COLD_FP}</span>.
+              Contrástala fuera de banda; deben coincidir. / Cross-check out-of-band; they must match.
+            </p>
             <Copyable label={t('verify.pubkey')} value={proof.cold.public_key_b64} testid="verify-cold-pubkey" />
             <Copyable label={t('verify.signature')} value={proof.cold.signature_b64} testid="verify-cold-sig" />
             <CmdBlock title={t('verify.runPy')} cmd={pySnippet(proof.cold.public_key_b64, proof.cold.signature_b64, 'COLD')} />

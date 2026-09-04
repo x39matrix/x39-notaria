@@ -11,6 +11,16 @@ import { verifyChainEntries } from './chain';
 
 const b64d = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
+// Raiz de confianza de la co-firma soberana: huellas sha256 de las claves publicas
+// ML-DSA-87 generadas en la Raspberry Pi 500 aislada. Se pinea en el cliente porque
+// signatures.json NO esta cubierto por el ancla OTS: comparar la huella contra la clave
+// que viene en el propio bundle es circular (un bundle falso trae su clave y su huella,
+// coherentes entre si). Conjunto -> permite rotar la clave sin invalidar el pasado.
+// Contrastala fuera de banda (README del bundle, la web, un correo previo).
+const TRUSTED_COLD_FINGERPRINTS = new Set([
+  '8453a25a41d6fe8fcb5647600f042a7c303daaca79b80928534025711981c6a1',
+]);
+
 export async function verifyBundle(file) {
   const report = { checks: [], proof: null, otsBytes: 0, noCold: false, verdict: 'fail' };
   const add = (id, ok, meta = {}) => report.checks.push({ id, ok, ...meta });
@@ -75,24 +85,34 @@ export async function verifyBundle(file) {
     }
   }
 
-  // 5. Firmas ML-DSA-87 (COLD soberana / WARM historica). Ausencia de COLD = aviso, no fallo:
-  // la co-firma se aplica post-sellado y su ausencia no es detectable criptograficamente.
+  // 5. Firmas ML-DSA-87. COLD soberana: cuenta para el veredicto y SOLO acredita si su clave
+  // reduce a una huella pineada (fin de la comprobacion circular). WARM: clave de servidor
+  // retirada 2026-07-16 (SEC-003), nunca fue soberana -> informativa, no altera el veredicto.
+  // Ausencia de COLD = aviso, no fallo: la co-firma se aplica post-sellado y su ausencia no
+  // es detectable criptograficamente.
   for (const tier of ['cold', 'warm']) {
     const blk = sigs[tier];
     if (!blk) { if (tier === 'cold') report.noCold = true; continue; }
-    let ok = false, fpOk = true;
+    let sigOk = false, fp = null;
     try {
       const pk = b64d(blk.public_key_b64);
-      ok = ml_dsa87.verify(b64d(blk.signature_b64), proofBytes, pk);
-      if (blk.fingerprint) fpOk = (await sha256Hex(pk)) === blk.fingerprint;
-    } catch { ok = false; }
-    add(`mldsa_${tier}`, ok && fpOk, { fp: blk.fingerprint });
+      sigOk = ml_dsa87.verify(b64d(blk.signature_b64), proofBytes, pk);
+      fp = await sha256Hex(pk);
+    } catch { sigOk = false; }
+    if (tier === 'cold') {
+      const trusted = fp != null && TRUSTED_COLD_FINGERPRINTS.has(fp);
+      add('mldsa_cold', sigOk && trusted, { fp, trusted });
+    } else {
+      add('mldsa_warm', sigOk, { fp, informative: true });
+    }
   }
 
   const otsFile = zip.file('proof.json.ots');
   if (otsFile) report.otsBytes = (await otsFile.async('uint8array')).length;
 
-  const allOk = report.checks.length > 0 && report.checks.every((c) => c.ok);
+  // El veredicto lo deciden solo los checks NO informativos (WARM queda fuera).
+  const scored = report.checks.filter((c) => !c.informative);
+  const allOk = scored.length > 0 && scored.every((c) => c.ok);
   report.verdict = allOk ? (report.noCold ? 'valid_no_cold' : 'valid') : 'fail';
   return report;
 }

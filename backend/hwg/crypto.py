@@ -34,7 +34,7 @@ GPG_HOME.mkdir(parents=True, exist_ok=True)
 os.chmod(GPG_HOME, 0o700)
 
 # Resolve binary paths at import time so we don't rely on supervisor's PATH.
-OTS_BIN = shutil.which("ots") or "/root/.venv/bin/ots"
+OTS_BIN = os.environ.get("HWG_OTS_BIN") or shutil.which("ots") or "/root/.venv/bin/ots"
 GPG_BIN = shutil.which("gpg") or "/usr/bin/gpg"
 
 BOT_NAME = "HWG Notary Bot"
@@ -44,6 +44,31 @@ BOT_EMAIL = "hwg-notary@x39matrix.local"
 # OTS output workspace (persistent so upgrade can find files later if needed)
 OTS_WORK = Path(os.environ.get("HWG_OTS_WORK", "/app/backend/hwg/ots_work"))
 OTS_WORK.mkdir(parents=True, exist_ok=True)
+
+# Sovereign calendar (FASE 5). Unset => stock behaviour (public calendars only).
+# Verified against otsclient 0.7.2 source: any -c REPLACES the default list,
+# so when our calendar is set we must pass all 5 explicitly. `upgrade` ignores
+# attestations from calendars outside the default whitelist => --whitelist needed.
+OTS_OWN_CALENDAR = os.environ.get("OTS_CALENDAR_URL", "").strip().rstrip("/")
+_PUBLIC_CALENDARS = [
+    "https://a.pool.opentimestamps.org",
+    "https://b.pool.opentimestamps.org",
+    "https://a.pool.eternitywall.com",
+    "https://ots.btc.catallaxy.com",
+]
+
+
+def _stamp_calendar_args() -> List[str]:
+    if not OTS_OWN_CALENDAR:
+        return []
+    args: List[str] = []
+    for url in [OTS_OWN_CALENDAR] + _PUBLIC_CALENDARS:
+        args += ["-c", url]
+    return args
+
+
+def _whitelist_args() -> List[str]:
+    return ["--whitelist", OTS_OWN_CALENDAR] if OTS_OWN_CALENDAR else []
 
 
 def _gpg(*args: str, input_bytes: Optional[bytes] = None,
@@ -171,7 +196,8 @@ async def ots_stamp(sha256_hex: str, payload: bytes,
     (None, []) if the stamp fails (network, calendars). NEVER raises."""
     payload_path, ots_path = _write_ots_pair(sha256_hex, payload)
     try:
-        rc, out, err = await _run_ots([OTS_BIN, "stamp", str(payload_path)], timeout)
+        rc, out, err = await _run_ots(
+            [OTS_BIN, "stamp"] + _stamp_calendar_args() + [str(payload_path)], timeout)
     except asyncio.TimeoutError:
         return None, []
     if rc != 0 or not ots_path.exists():
@@ -200,11 +226,11 @@ async def ots_info_probe(sha256_hex: str, ots_b64: str,
         text = out.decode(errors="replace") + err.decode(errors="replace")
     except asyncio.TimeoutError:
         text = ""
-    btc_match = _BTC_BLOCK_RE.search(text)
+    btc_matches = _BTC_BLOCK_RE.findall(text)
     pending_matches = _PENDING_RE.findall(text)
-    if btc_match:
+    if btc_matches:
         status = "anchored_btc"
-        btc_block: Optional[int] = int(btc_match.group(1))
+        btc_block: Optional[int] = min(int(b) for b in btc_matches)
     elif pending_matches:
         status = "pending"
         btc_block = None
@@ -225,7 +251,7 @@ async def ots_upgrade(sha256_hex: str, ots_b64: str,
     If nothing changed, returns the original b64 + current info probe."""
     _, ots_path = _write_ots_pair(sha256_hex, payload, base64.b64decode(ots_b64))
     try:
-        await _run_ots([OTS_BIN, "upgrade", str(ots_path)], timeout)
+        await _run_ots([OTS_BIN] + _whitelist_args() + ["upgrade", str(ots_path)], timeout)
     except asyncio.TimeoutError:
         pass
     # Clean any .bak file ots writes on successful upgrade

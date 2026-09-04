@@ -103,3 +103,5 @@ test_reports/
 test_result.md
 backend/hwg/gnupg/
 .gitconfig
+backend/hwg/ots_work/
+backend/hwg/ots_cache/
