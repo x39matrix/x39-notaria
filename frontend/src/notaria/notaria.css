@@ -37,6 +37,7 @@
 .nt-nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
 .nt-brand { display: flex; align-items: center; gap: 9px; font-family: var(--serif); font-size: 21px; font-weight: 600; }
 .nt-brand .seal-dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--seal); display: inline-block; }
+.nt-brand .nt-logo-img { width: 30px; height: 30px; border-radius: 50%; display: inline-block; }
 .nt-nav-links { display: flex; align-items: center; gap: 8px; }
 
 /* buttons */
@@ -225,3 +226,13 @@
   .nt-code { font-size: 10px; }
 }
 
+
+/* RTL (arabe): hashes, direcciones y codigo siempre LTR para legibilidad tecnica */
+[dir="rtl"] .nt-mono,
+[dir="rtl"] input.nt-mono,
+[dir="rtl"] .nt-input.nt-mono {
+  direction: ltr;
+  unicode-bidi: embed;
+}
+[dir="rtl"] .nt-brand { flex-direction: row; }
+[dir="rtl"] .nt-langbar { direction: ltr; }

@@ -76,8 +76,13 @@ export async function verifyBundle(file) {
             try { good = !!pk && ed25519.verify(b64d(e.sig_b64), msg, b64d(pk)); } catch { good = false; }
             if (good) okCount += 1; else valid = false;
           }
-          add('msgsigs', valid && okCount === proof.msg_sigs.signed,
-            { signed: okCount, total: proof.msg_sigs.total });
+          // Un bundle v3 debe traer TODOS los mensajes firmados: los contadores de proof.json
+          // los escribe quien genera el bundle, asi que se contrastan contra la cadena real.
+          // Mensajes sin firma en un hilo v3 = fallo (no se dejan pasar "los que falten").
+          const total = entries.length;
+          const allSigned = proof.v === 'X39-NOTARIA-3' ? okCount === total : true;
+          add('msgsigs', valid && allSigned && okCount === proof.msg_sigs.signed && total === proof.msg_sigs.total,
+            { signed: okCount, total });
         }
       } catch {
         add('chain', false, { count: 0 });
@@ -111,8 +116,12 @@ export async function verifyBundle(file) {
   if (otsFile) report.otsBytes = (await otsFile.async('uint8array')).length;
 
   // El veredicto lo deciden solo los checks NO informativos (WARM queda fuera).
+  // Sin co-firma COLD pineada, lo unico que se ha comprobado es que el bundle es coherente
+  // consigo mismo (datos que escribe quien lo genera) y el ancla OTS no se verifica en el
+  // navegador: NO hay raiz de confianza -> 'consistent', nunca 'valid'. Un bundle inventado
+  // que omita el bloque cold no debe salir en verde.
   const scored = report.checks.filter((c) => !c.informative);
   const allOk = scored.length > 0 && scored.every((c) => c.ok);
-  report.verdict = allOk ? (report.noCold ? 'valid_no_cold' : 'valid') : 'fail';
+  report.verdict = allOk ? (report.noCold ? 'consistent' : 'valid') : 'fail';
   return report;
 }

@@ -51,11 +51,22 @@ export const VerificadorIndependiente = ({ proof, id }) => {
     return () => { alive = false; };
   }, [id, proof.proof_hash]);
 
-  const fileBase = `x39-prueba-${id}.json`;
+  // Los snippets se interpolan dentro de un heredoc de shell y de codigo Python: TODO lo que
+  // venga del servidor (id, claves, firmas) se valida contra un alfabeto y una longitud exactos
+  // antes de entrar en ellos. Con un servidor comprometido, un valor manipulado seria codigo
+  // ejecutable en la maquina de quien copia y pega. Si algo no cuadra, no se genera el snippet.
+  const SAFE_ID = /^[0-9a-f]{20}$/.test(String(id)) ? id : null;
+  const fileBase = SAFE_ID ? `x39-prueba-${SAFE_ID}.json` : 'x39-prueba.json';
+  const B64_LEN = (bytes) => 4 * Math.ceil(bytes / 3);           // pk 2592 B -> 3456, sig 4627 B -> 6172
+  const safeB64 = (s, bytes) =>
+    (typeof s === 'string' && s.length === B64_LEN(bytes) && /^[A-Za-z0-9+/]+={0,2}$/.test(s)) ? s : null;
   // Huella de la clave COLD soberana de X-39. Contrastala fuera de banda (esta web NO
   // basta: un bundle falso puede traer su propia huella coherente consigo misma).
   const COLD_FP = '8453a25a41d6fe8fcb5647600f042a7c303daaca79b80928534025711981c6a1';
-  const pySnippet = (pk, sig, tier) => `pip install pqcrypto
+  const pySnippet = (pkRaw, sigRaw, tier) => {
+    const pk = safeB64(pkRaw, 2592), sig = safeB64(sigRaw, 4627);
+    if (!pk || !sig) return `# ${tier}: clave o firma con formato invalido; no se genera el comando. / invalid key or signature format; command not generated.`;
+    return `pip install pqcrypto
 python3 - <<'EOF'
 import base64, hashlib
 from pqcrypto.sign import ml_dsa_87 as m
@@ -81,6 +92,7 @@ ${tier === 'COLD'
   ? `print("clave COLD", "RECONOCIDA de X-39" if fp == "${COLD_FP}" else "NO RECONOCIDA: NO es la autoridad de X-39")`
   : `print("WARM informativa: clave de servidor retirada 2026-07-16 (SEC-003), no acredita autoria")`}
 EOF`;
+  };
   const otsCmd = `pip install opentimestamps-client
 # guarda ambos archivos con el mismo nombre base:
 #   ${fileBase}   y   ${fileBase}.ots

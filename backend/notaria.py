@@ -23,12 +23,55 @@ from typing import Optional
 
 import requests
 from fastapi import APIRouter, HTTPException, Depends, Request, Response, Header, BackgroundTasks
+from ratelimit import limiter
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from pymongo import MongoClient
 from pqcrypto.sign import ml_dsa_87 as _mldsa
 
 from hwg.crypto import ots_stamp, ots_info_probe, ots_upgrade
+
+
+# ---------------------------------------------------------------------------
+# ML-DSA-87: primitivo unico de verificacion + autotest de arranque.
+#
+# Las versiones de pqcrypto no coinciden en como reporta verify() el resultado:
+#   - 0.4.x  : devuelve True/False (y generate_keypair).
+#   - >=1.0.0: devuelve None si la firma es valida y LANZA InvalidSignatureError
+#              si no (y keygen).
+# Un `if not verify(...)` o un `bool(verify(...))` rechaza firmas BUENAS bajo la
+# segunda convencion. Todo el modulo verifica SOLO a traves de _mldsa_ok().
+#
+# El autotest corre al importar: si la libreria instalada acepta una firma
+# alterada o rechaza una valida, el servicio NO arranca. Un verificador que
+# miente es peor que un servicio caido: caido se ve, mintiendo no.
+# ---------------------------------------------------------------------------
+def _mldsa_ok(pk: bytes, msg: bytes, sig: bytes) -> bool:
+    """True si la firma ML-DSA-87 es valida. Fail-closed: cualquier excepcion es fallo."""
+    try:
+        return _mldsa.verify(pk, msg, sig) is not False
+    except Exception:
+        return False
+
+
+def _mldsa_selftest() -> None:
+    kg = getattr(_mldsa, "keygen", None) or getattr(_mldsa, "generate_keypair", None)
+    if kg is None:
+        raise RuntimeError("pqcrypto/ml_dsa_87 sin keygen ni generate_keypair: version desconocida, no arranco")
+    pk, sk = kg()
+    msg = b"x39-selftest-mldsa"
+    sig = _mldsa.sign(sk, msg)
+    if not _mldsa_ok(pk, msg, sig):
+        raise RuntimeError("autotest ML-DSA: la libreria instalada RECHAZA una firma valida "
+                           "(convencion de retorno incompatible); no arranco con un verificador que miente")
+    bad = bytearray(sig)
+    bad[0] ^= 1
+    if _mldsa_ok(pk, msg, bytes(bad)):
+        raise RuntimeError("autotest ML-DSA: la libreria instalada ACEPTA una firma alterada; "
+                           "no arranco con un verificador que miente")
+
+
+_mldsa_selftest()
 
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ.get("DB_NAME", "x39matrix")
@@ -181,13 +224,36 @@ def _require_admin(x_admin_token: str):
         raise HTTPException(403, "Token de operador invalido")
 
 
+# Huella (sha256 de la pk cruda) de la UNICA clave COLD que este servidor reconoce como autoridad de X-39.
+# Fijada en codigo y versionada en git: ni Mongo ni /admin/cold_key pueden cambiar la autoridad.
+COLD_FP_PINNED = "8453a25a41d6fe8fcb5647600f042a7c303daaca79b80928534025711981c6a1"
+
+
 def _cold_pubkey():
-    """Devuelve (pk_bytes, pk_b64, fingerprint) de la clave COLD soberana registrada, o None."""
+    """Devuelve (pk_bytes, pk_b64, fingerprint) de la clave COLD registrada, o None.
+    Si la registrada NO coincide con COLD_FP_PINNED se trata como inexistente y se deja constancia."""
     doc = nmeta.find_one({"_id": "cold_mldsa_pub"})
     if not doc:
         return None
     pk_b64 = doc["pk"]
-    return base64.b64decode(pk_b64), pk_b64, doc["fingerprint"]
+    pk = base64.b64decode(pk_b64)
+    fp = hashlib.sha256(pk).hexdigest()
+    if fp != COLD_FP_PINNED or doc.get("fingerprint") != fp:
+        print(f"[COLD] ALERTA: la clave COLD de Mongo (fp {fp[:16]}...) NO es la fijada en codigo. Se ignora.", flush=True)
+        return None
+    return pk, pk_b64, fp
+
+
+def cold_startup_check():
+    """Autoexamen de arranque: si Mongo contiene una clave COLD distinta de la fijada, el servidor NO arranca."""
+    doc = nmeta.find_one({"_id": "cold_mldsa_pub"})
+    if not doc:
+        print(f"[COLD] AVISO: no hay clave COLD registrada. Solo se aceptara la de huella {COLD_FP_PINNED[:16]}...", flush=True)
+        return
+    fp = hashlib.sha256(base64.b64decode(doc["pk"])).hexdigest()
+    if fp != COLD_FP_PINNED:
+        raise RuntimeError(f"[COLD] La clave COLD registrada (fp {fp}) NO coincide con COLD_FP_PINNED ({COLD_FP_PINNED}). Arranque abortado.")
+    print(f"[COLD] OK: la clave COLD registrada coincide con la huella fijada {COLD_FP_PINNED[:16]}...", flush=True)
 
 
 class ColdKeyModel(BaseModel):
@@ -198,8 +264,7 @@ class ColdSigModel(BaseModel):
     signature_b64: str
 
 
-# ---------- Auth (Emergent-managed Google OAuth) ----------
-SESSION_API = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+# ---------- Auth ----------
 
 
 def _get_or_create_user(email: str, name: Optional[str], picture: Optional[str]) -> dict:
@@ -258,37 +323,6 @@ def require_csrf(request: Request) -> str:
     return sess["email"]
 
 
-class SessionExchangeModel(BaseModel):
-    session_id: str
-
-
-@notaria_router.post("/auth/session")
-async def auth_session(data: SessionExchangeModel, request: Request, response: Response):
-    _rate_limit(request, "auth", limit=10, window=60)
-    try:
-        r = requests.get(SESSION_API, headers={"X-Session-ID": data.session_id}, timeout=15)
-    except requests.RequestException:
-        raise HTTPException(502, "Servicio de autenticacion no disponible")
-    if r.status_code != 200:
-        raise HTTPException(401, "session_id invalido o expirado")
-    d = r.json()
-    email = (d.get("email") or "").lower().strip()
-    session_token = d.get("session_token")
-    if not email or not session_token:
-        raise HTTPException(401, "Identidad incompleta")
-    user = _get_or_create_user(email, d.get("name"), d.get("picture"))
-    csrf = secrets.token_urlsafe(32)
-    ns.update_one(
-        {"session_token": session_token},
-        {"$set": {"session_token": session_token, "email": email, "user_id": user["user_id"],
-                  "csrf_token": csrf,
-                  "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
-                  "created_at": _now()}},
-        upsert=True,
-    )
-    response.set_cookie("session_token", session_token, max_age=7 * 24 * 3600,
-                        httponly=True, secure=True, samesite="lax", path="/")
-    return {"email": email, "name": user.get("name", ""), "picture": user.get("picture", ""), "csrf_token": csrf}
 
 
 @notaria_router.get("/auth/me")
@@ -316,6 +350,68 @@ async def auth_logout(request: Request, response: Response):
     return {"ok": True}
 
 
+# ---------- Auth por clave (reto Ed25519, sesion propia; sin correo ni terceros) ----------
+nchal = _db["notaria_auth_challenges"]
+nchal.create_index("nonce", unique=True)
+nchal.create_index("expires_at", expireAfterSeconds=0)
+class KeyChallengeModel(BaseModel):
+    pub_b64: str
+class KeyVerifyModel(BaseModel):
+    pub_b64: str
+    nonce: str
+    sig_b64: str
+@notaria_router.post("/auth/key/challenge")
+@limiter.limit("10/minute")
+async def auth_key_challenge(data: KeyChallengeModel, request: Request):
+    _rate_limit(request, "auth", limit=10, window=60)
+    if _b64_len(data.pub_b64) != 32:
+        raise HTTPException(400, "pub_b64 invalida (32 bytes Ed25519)")
+    nonce = secrets.token_hex(32)
+    nchal.insert_one({"nonce": nonce, "pub_b64": data.pub_b64, "used": False,
+                      "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5)})
+    return {"nonce": nonce, "payload": f"x39auth:v1:{nonce}", "expires_in": 300}
+@notaria_router.post("/auth/key/verify")
+@limiter.limit("10/minute")
+async def auth_key_verify(data: KeyVerifyModel, request: Request, response: Response):
+    _rate_limit(request, "auth", limit=10, window=60)
+    # Consumo ATOMICO del reto: encontrar-y-marcar en una sola operacion de Mongo.
+    # Cierra la carrera find/update (dos verificaciones concurrentes ya no pueden
+    # pasar las dos). Si la firma luego no verifica, el reto queda quemado: se pide otro.
+    ch = nchal.find_one_and_update(
+        {"nonce": data.nonce, "pub_b64": data.pub_b64, "used": False},
+        {"$set": {"used": True}},
+    )
+    if not ch:
+        raise HTTPException(401, "Reto inexistente o ya usado")
+    exp = ch["expires_at"]
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp < datetime.now(timezone.utc):
+        raise HTTPException(401, "Reto expirado")
+    if _b64_len(data.sig_b64) != 64:
+        raise HTTPException(400, "sig_b64 invalida (64 bytes Ed25519)")
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        raw = base64.b64decode(data.pub_b64)
+        Ed25519PublicKey.from_public_bytes(raw).verify(
+            base64.b64decode(data.sig_b64), f"x39auth:v1:{data.nonce}".encode())
+    except Exception:
+        raise HTTPException(401, "Firma del reto invalida")
+    identity = "key:" + hashlib.sha256(raw).hexdigest()[:16]
+    user = _get_or_create_user(identity, None, None)
+    session_token = secrets.token_urlsafe(32)
+    csrf = secrets.token_urlsafe(32)
+    ns.update_one(
+        {"session_token": session_token},
+        {"$set": {"session_token": session_token, "email": identity, "user_id": user["user_id"],
+                  "auth": "ed25519", "pub_b64": data.pub_b64, "csrf_token": csrf,
+                  "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+                  "created_at": _now()}},
+        upsert=True,
+    )
+    response.set_cookie("session_token", session_token, max_age=7 * 24 * 3600,
+                        httponly=True, secure=True, samesite="lax", path="/")
+    return {"identity": identity, "csrf_token": csrf}
 # ---------- Agreements ----------
 class CreateAgreementModel(BaseModel):
     title: str
@@ -365,6 +461,7 @@ def _public_view(a: dict, email: Optional[str] = None) -> dict:
 
 
 @notaria_router.post("/agreements")
+@limiter.limit("20/minute")
 async def create_agreement(data: CreateAgreementModel, request: Request, email: str = Depends(require_csrf)):
     _rate_limit(request, "create", limit=20, window=60)
     ch = data.content_hash.lower().strip()
@@ -429,7 +526,8 @@ class JoinModel(BaseModel):
 
 
 @notaria_router.post("/agreements/{aid}/join")
-async def join_agreement(aid: str, data: JoinModel, email: str = Depends(require_csrf)):
+@limiter.limit("10/minute")
+async def join_agreement(aid: str, data: JoinModel, request: Request, email: str = Depends(require_csrf)):
     a = na.find_one({"agreement_id": aid}, {"_id": 0})
     if not a:
         raise HTTPException(404, "Acuerdo no encontrado")
@@ -461,6 +559,7 @@ class E2EKeyModel(BaseModel):
 class E2EPQKeyModel(BaseModel):
     xwing_pub_b64: Optional[str] = None
     xwing_ct_b64: Optional[str] = None
+    xwing_pub_sig_b64: Optional[str] = None   # firma Ed25519 (sig.js) de A sobre x39xwing:v2:<aid>:<xwing_pub_b64>
 
 
 def _role(a: dict, email: str) -> str:
@@ -506,6 +605,17 @@ async def post_message(aid: str, data: MessageModel, request: Request, email: st
             raise HTTPException(400, "Firma v3 requiere cts valido")
         if _b64_len(sig_b64) != 64:
             raise HTTPException(400, "sig_b64 invalida (64 bytes Ed25519)")
+        # v3.1: verificar la firma del autor contra su clave publicada (sig_keys[rol]). Sin clave o invalida -> 400.
+        pk_b64 = (a.get("sig_keys") or {}).get(_role(a, email))
+        if not pk_b64:
+            raise HTTPException(400, "Publica tu clave de firma (sig_key) antes de enviar mensajes firmados")
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+            content_hash = hashlib.sha256((ct + iv).encode()).hexdigest()
+            Ed25519PublicKey.from_public_bytes(base64.b64decode(pk_b64)).verify(
+                base64.b64decode(sig_b64), f"x39msg:v3:{aid}:{content_hash}:{cts}".encode())
+        except Exception:
+            raise HTTPException(400, "Firma Ed25519 del mensaje invalida")
     if nmsg.count_documents({"agreement_id": aid}) >= 500:
         raise HTTPException(409, "Limite de 500 mensajes por acuerdo alcanzado")
     msg = {"agreement_id": aid, "sender": email, "ct": ct, "iv": iv, "ts": _now()}
@@ -570,6 +680,10 @@ async def publish_e2e_pq_key(aid: str, data: E2EPQKeyModel, email: str = Depends
         if _b64_len(data.xwing_pub_b64) != XWING_PK_LEN:
             raise HTTPException(400, f"xwing_pub_b64 invalida ({XWING_PK_LEN} bytes X-Wing)")
         entry["xwing_pub_b64"] = data.xwing_pub_b64
+        if data.xwing_pub_sig_b64 is not None:
+            if _b64_len(data.xwing_pub_sig_b64) != 64:
+                raise HTTPException(400, "xwing_pub_sig_b64 invalida (64 bytes Ed25519)")
+            entry["xwing_pub_sig_b64"] = data.xwing_pub_sig_b64
     if data.xwing_ct_b64 is not None:
         if role != "B":
             raise HTTPException(400, "Solo el rol B publica la encapsulacion X-Wing")
@@ -592,9 +706,10 @@ async def get_e2e_pq_keys(aid: str, email: str = Depends(current_user)):
         raise HTTPException(403, "Acceso restringido")
     keys = a.get("e2e_pq", {})
     pub_a = (keys.get("A") or {}).get("xwing_pub_b64")
+    sig_a = (keys.get("A") or {}).get("xwing_pub_sig_b64")
     ct_b = (keys.get("B") or {}).get("xwing_ct_b64")
     return {"suite": keys.get("suite"),
-            "A": {"xwing_pub_b64": pub_a} if pub_a else None,
+            "A": {"xwing_pub_b64": pub_a, "xwing_pub_sig_b64": sig_a} if pub_a else None,
             "B": {"xwing_ct_b64": ct_b} if ct_b else None}
 
 
@@ -744,14 +859,30 @@ async def sign_agreement(aid: str, background_tasks: BackgroundTasks, email: str
     return _public_view(a, email)
 
 
+# Orden de calidad de los estados OTS: nunca se persiste un estado peor que el ya guardado.
+_OTS_RANK = {"anchored_btc": 3, "pending": 2, "pending_calendars": 2, "not_stamped": 1}
+
+
 async def _refresh_ots(a: dict) -> dict:
-    """Intenta actualizar la prueba OTS contra los calendarios y devuelve estado real."""
+    """Intenta actualizar la prueba OTS contra los calendarios y devuelve estado real.
+    Si `ots` o los calendarios fallan y el resultado es PEOR que lo guardado, no se persiste:
+    un fallo transitorio no degrada en Mongo un acuerdo ya anclado."""
     ots = a.get("ots")
     if not ots or not ots.get("ots_b64"):
         return {"status": "not_stamped", "btc_block": None}
     payload = base64.b64decode(ots["payload_b64"])
     ph = a["proof"]["proof_hash"]
-    new_b64, info = await ots_upgrade(ph, ots["ots_b64"], payload)
+    prev_status, prev_block = ots.get("status"), ots.get("btc_block")
+    try:
+        new_b64, info = await ots_upgrade(ph, ots["ots_b64"], payload)
+    except Exception as e:
+        print(f"[OTS] ERROR: refresco de {a['agreement_id']} fallo ({type(e).__name__}: {e}); "
+              f"se devuelve el estado guardado {prev_status}.", flush=True)
+        return {"status": prev_status, "btc_block": prev_block}
+    if _OTS_RANK.get(info["ots_status"], 0) < _OTS_RANK.get(prev_status, 0):
+        print(f"[OTS] AVISO: refresco de {a['agreement_id']} devolvio {info['ots_status']} "
+              f"con estado previo {prev_status}; no se persiste.", flush=True)
+        return {"status": prev_status, "btc_block": prev_block}
     ots["ots_b64"] = new_b64
     ots["status"] = info["ots_status"]
     ots["btc_block"] = info["btc_block"]
@@ -760,7 +891,8 @@ async def _refresh_ots(a: dict) -> dict:
 
 
 @notaria_router.post("/agreements/{aid}/ots/refresh")
-async def refresh_ots(aid: str, email: str = Depends(require_csrf)):
+@limiter.limit("6/minute")
+async def refresh_ots(aid: str, request: Request, email: str = Depends(require_csrf)):
     a = na.find_one({"agreement_id": aid}, {"_id": 0})
     if not a or not _member(a, email):
         raise HTTPException(403, "Acceso restringido")
@@ -775,6 +907,7 @@ class VerifyModel(BaseModel):
 
 
 @notaria_router.post("/verify")
+@limiter.limit("20/minute")
 async def verify_public(data: VerifyModel, request: Request):
     _rate_limit(request, "verify", limit=30, window=60)
     h = data.hash.lower().strip()
@@ -784,7 +917,27 @@ async def verify_public(data: VerifyModel, request: Request):
     if not a:
         return {"found": False, "hash": h}
     st = await _refresh_ots(a)
+    pq_valid = None
+    cold_valid = None
+    payload_b64 = (a.get("ots") or {}).get("payload_b64")
+    if payload_b64:
+        payload = base64.b64decode(payload_b64)
+        if a.get("pq") and a["pq"].get("signature_b64"):
+            try:
+                pq_valid = _mldsa_ok(base64.b64decode(a["pq"]["public_key_b64"]),
+                                     payload, base64.b64decode(a["pq"]["signature_b64"]))
+            except Exception:
+                pq_valid = False
+        if a.get("cold") and a["cold"].get("signature_b64"):
+            try:
+                cold_pk = base64.b64decode(a["cold"]["public_key_b64"])
+                cold_pinned = hashlib.sha256(cold_pk).hexdigest() == COLD_FP_PINNED
+                cold_valid = cold_pinned and _mldsa_ok(cold_pk, payload, base64.b64decode(a["cold"]["signature_b64"]))
+            except Exception:
+                cold_valid = False
     return {
+        "pq_valid": pq_valid,
+        "cold_valid": cold_valid,
         "found": True,
         "matched": "content" if a["content_hash"] == h else "proof",
         "agreement_id": a["agreement_id"],
@@ -821,6 +974,7 @@ async def public_proof(aid: str):
 
 # ---------- Estado de pago (solo lectura, no custodial) ----------
 @notaria_router.get("/agreements/{aid}/payment_status")
+@limiter.limit("30/minute")
 async def payment_status(aid: str, request: Request):
     _rate_limit(request, "paystatus", limit=30, window=60)
     a = na.find_one({"agreement_id": aid}, {"_id": 0})
@@ -858,6 +1012,8 @@ async def register_cold_key(data: ColdKeyModel, x_admin_token: str = Header(defa
     if len(pk) != _mldsa.PUBLIC_KEY_SIZE:
         raise HTTPException(400, f"Tamano de clave ML-DSA-87 invalido (esperado {_mldsa.PUBLIC_KEY_SIZE})")
     fp = hashlib.sha256(pk).hexdigest()
+    if fp != COLD_FP_PINNED:
+        raise HTTPException(403, "Esa clave NO es la autoridad COLD fijada en el codigo de este servidor")
     nmeta.update_one({"_id": "cold_mldsa_pub"},
                      {"$set": {"pk": data.public_key_b64, "fingerprint": fp, "registered_at": _now()}},
                      upsert=True)
@@ -891,7 +1047,7 @@ async def upload_cold_signature(aid: str, data: ColdSigModel, x_admin_token: str
         sig = base64.b64decode(data.signature_b64)
     except Exception:
         raise HTTPException(400, "signature_b64 invalida")
-    if not _mldsa.verify(pk, payload, sig):
+    if not _mldsa_ok(pk, payload, sig):
         raise HTTPException(400, "La firma COLD no verifica sobre el payload anclado")
     cold = {"algorithm": "ML-DSA-87", "tier": "COLD", "signature_b64": data.signature_b64,
             "public_key_b64": pk_b64, "fingerprint": fp, "verified_at": _now()}
@@ -971,22 +1127,49 @@ ots upgrade proof.json.ots && ots verify proof.json.ots
 > verifiable (public key embedded in `signatures.json`). For new agreements, post-quantum authorship is
 > provided exclusively by the COLD co-signature (air-gapped sk, never networked).
 
+Huella COLD esperada / expected COLD fingerprint: `8453a25a41d6fe8fcb5647600f042a7c303daaca79b80928534025711981c6a1`
+CONTRASTALA por un canal independiente de este ZIP (la web de X-39, un correo previo): un bundle falso puede traer su propia clave y su propia huella, coherentes entre si. / CROSS-CHECK it out-of-band: a forged bundle can ship its own key and matching fingerprint.
+
 ```
 pip install pqcrypto
 python3 verify_mldsa.py
 ```
 Contenido de `verify_mldsa.py` / contents:
 ```python
-import json, base64
+import json, base64, hashlib
 from pqcrypto.sign import ml_dsa_87
+
+# Huella de la clave COLD de X-39. Contrastala fuera de este bundle (ver README).
+COLD_FP = "8453a25a41d6fe8fcb5647600f042a7c303daaca79b80928534025711981c6a1"
+
+def verify_ok(pk, msg, sig):
+    # pqcrypto >= 1.0.0 devuelve None si la firma es valida y LANZA excepcion si no;
+    # versiones previas devuelven True/False. Esto cubre ambas convenciones.
+    try:
+        return ml_dsa_87.verify(pk, msg, sig) is not False
+    except Exception:
+        return False
+
 s = json.load(open("signatures.json"))
 p = open("proof.json", "rb").read()
 for tier in ("warm", "cold"):
     t = s.get(tier)
     if not t:
         continue
-    ok = ml_dsa_87.verify(base64.b64decode(t["public_key_b64"]), p, base64.b64decode(t["signature_b64"]))
-    print(tier.upper(), "ML-DSA-87:", "VALID" if ok else "INVALID")
+    pk = base64.b64decode(t["public_key_b64"])
+    sig = base64.b64decode(t["signature_b64"])
+    valid = verify_ok(pk, p, sig)
+    bad = bytearray(sig)
+    bad[0] ^= 1
+    if valid and verify_ok(pk, p, bytes(bad)):
+        print("AVISO: esta instalacion acepta una firma ALTERADA; veredicto no fiable")
+        valid = False
+    fp = hashlib.sha256(pk).hexdigest()
+    print(tier.upper(), "ML-DSA-87:", "VALID" if valid else "INVALID", "| huella/fp:", fp)
+    if tier == "cold":
+        print("  clave COLD", "RECONOCIDA de X-39" if fp == COLD_FP else "NO RECONOCIDA: NO es la autoridad de X-39")
+    else:
+        print("  WARM informativa: clave de servidor retirada 2026-07-16 (SEC-003), no acredita autoria")
 ```
 
 ### 3.5 Firmas por mensaje / Per-message signatures (X39-NOTARIA-3)

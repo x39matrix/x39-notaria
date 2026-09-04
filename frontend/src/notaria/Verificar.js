@@ -10,7 +10,7 @@ const HEX64 = /^[0-9a-f]{64}$/;
 
 export default function Verificar() {
   const { t } = useLang();
-  const [mode, setMode] = useState('file');
+  const [mode, setMode] = useState('hash');
   const [text, setText] = useState('');
   const [hashInput, setHashInput] = useState('');
   const [fileName, setFileName] = useState('');
@@ -144,8 +144,8 @@ export default function Verificar() {
             </div>
             {bundleBusy && <p className="nt-note nt-mono" style={{ marginTop: 14 }}>{t('ver.bverifying')}</p>}
             {bundleReport && (
-              <div className="nt-card nt-card-pad" style={{ marginTop: 28, borderColor: bundleReport.verdict === 'fail' ? 'var(--error)' : 'var(--seal)' }} data-testid="verify-bundle-result">
-                <h2 className="nt-serif" style={{ fontSize: 22, fontWeight: 600, margin: '0 0 16px', color: bundleReport.verdict === 'fail' ? 'var(--error)' : 'var(--seal)' }} data-testid="verify-bundle-verdict">
+              <div className="nt-card nt-card-pad" style={{ marginTop: 28, borderColor: bundleReport.verdict === 'fail' ? 'var(--error)' : bundleReport.verdict === 'consistent' ? '#8A6D1F' : 'var(--seal)' }} data-testid="verify-bundle-result">
+                <h2 className="nt-serif" style={{ fontSize: 22, fontWeight: 600, margin: '0 0 16px', color: bundleReport.verdict === 'fail' ? 'var(--error)' : bundleReport.verdict === 'consistent' ? '#8A6D1F' : 'var(--seal)' }} data-testid="verify-bundle-verdict">
                   {t(`ver.bverdict.${bundleReport.verdict}`)}
                 </h2>
                 {bundleReport.checks.map((c) => (
@@ -204,6 +204,16 @@ export default function Verificar() {
                       {result.ots_status === 'anchored_btc'
                         ? <a style={{ color: 'var(--seal)', textDecoration: 'underline' }} href={`https://mempool.space/block/${result.btc_block}`} target="_blank" rel="noreferrer" data-testid="verify-block-link">{t('ag.badgeConfirmedIn')}{result.btc_block} →</a>
                         : t('ver.pendingConf')}
+                    </span>
+                  </div>
+                  <div className="nt-kv"><span>{t('ver.pq')}</span>
+                    <span className="nt-mono" data-testid="verify-pq-status" style={{ color: result.pq_valid ? 'var(--seal)' : result.pq_valid === false ? 'var(--error)' : 'var(--muted)', fontWeight: 700 }}>
+                      {result.pq_valid ? `✓ ${t('ver.pqValid')}` : result.pq_valid === false ? `✗ ${t('ver.pqInvalid')}` : '—'}
+                    </span>
+                  </div>
+                  <div className="nt-kv"><span>{t('ver.cold')}</span>
+                    <span className="nt-mono" data-testid="verify-cold-status" style={{ color: result.cold_valid ? 'var(--seal)' : result.cold_valid === false ? 'var(--error)' : 'var(--muted)', fontWeight: 700 }}>
+                      {result.cold_valid ? `✓ ${t('ver.pqValid')}` : result.cold_valid === false ? `✗ ${t('ver.pqInvalid')}` : '—'}
                     </span>
                   </div>
                   <div className="nt-kv"><span>{t('ver.contentHash')}</span><span className="nt-mono" style={{ fontSize: 10 }}>{result.content_hash}</span></div>

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { LogOut } from 'lucide-react';
 import { useAuth } from './NotariaApp';
 import { useLang, LANGS } from './i18n';
-import { api, loginWithGoogle } from './api';
+import { api, goLogin } from './api';
 
 export const Nav = () => {
   const { user, setUser } = useAuth();
@@ -20,7 +20,7 @@ export const Nav = () => {
     <nav className="nt-nav">
       <div className="nt-wrap nt-nav-inner">
         <Link to={user ? '/panel' : '/'} className="nt-brand" data-testid="nav-brand">
-          <span className="seal-dot" />
+          <img src="/x39_icon_192.png" alt="X-39 Notaría" className="nt-logo-img" data-testid="nav-logo-img" />
           X-39 Notaría
         </Link>
         <div className="nt-nav-links">
@@ -33,7 +33,7 @@ export const Nav = () => {
               </button>
             </>
           ) : (
-            <button className="nt-btn nt-btn-primary" onClick={() => loginWithGoogle('/panel')} data-testid="nav-login-btn">
+            <button className="nt-btn nt-btn-primary" onClick={() => goLogin('/panel')} data-testid="nav-login-btn">
               {t('nav.login')}
             </button>
           )}

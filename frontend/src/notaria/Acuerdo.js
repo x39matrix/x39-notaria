@@ -39,6 +39,7 @@ export default function Acuerdo() {
   const [chainCheck, setChainCheck] = useState(null);
   const [view, setView] = useState([]);
   const identityRef = useRef(null);
+  const pqWarnedRef = useRef(false);
   const pqIdRef = useRef(null);
   const sigIdRef = useRef(null);
   const canSignRef = useRef(false);
@@ -103,7 +104,10 @@ export default function Acuerdo() {
           if (!pqIdRef.current) pqIdRef.current = e2e2.getIdentityA(user.email);
           const me = pqIdRef.current;
           if ((pq.A?.xwing_pub_b64 || null) !== me.pubB64) {
-            await api.publishE2EPQKey(id, { xwing_pub_b64: me.pubB64 }).catch(() => {});
+            const sid = sigIdRef.current || (sigIdRef.current = msgSig.getIdentity(user.email));
+            await api.publishSigKey(id, sid.pubB64).catch(() => {});
+            const xsig = msgSig.signString(sid, `x39xwing:v2:${id}:${me.pubB64}`);
+            await api.publishE2EPQKey(id, { xwing_pub_b64: me.pubB64, xwing_pub_sig_b64: xsig }).catch(() => {});
             return;
           }
           if (pq.B?.xwing_ct_b64) {
@@ -112,6 +116,14 @@ export default function Acuerdo() {
             if (!stop) { setPqActive(true); setSharedKey(key); }
           }
         } else if (pq.A?.xwing_pub_b64) {
+          // Autenticacion de la pubkey X-Wing de A con su clave Ed25519 (sig.js): sin firma valida, no hay handshake.
+          const sk = await api.getSigKeys(id).catch(() => null);
+          const pubA = typeof sk?.A === 'string' ? sk.A : (sk?.A?.ed25519_pub_b64 || null);
+          const okSig = !!(pubA && pq.A.xwing_pub_sig_b64 && msgSig.verifyString(pubA, `x39xwing:v2:${id}:${pq.A.xwing_pub_b64}`, pq.A.xwing_pub_sig_b64));
+          if (!okSig) {
+            if (!pqWarnedRef.current) { pqWarnedRef.current = true; toast.error(t('ag.pqAuthFail')); }
+            return;
+          }
           const enc = e2e2.encapsulate(id, user.email, pq.A.xwing_pub_b64, pq.B?.xwing_ct_b64 || null);
           if ((pq.B?.xwing_ct_b64 || null) !== enc.ctB64) {
             await api.publishE2EPQKey(id, { xwing_ct_b64: enc.ctB64 }).catch(() => {});
@@ -124,6 +136,7 @@ export default function Acuerdo() {
     setup();
     const timer = setInterval(setup, 4000);
     return () => { stop = true; clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.email, ag?.my_role, id, sealed, sharedKey]);
 
   // Descifra los mensajes para mostrarlos (los antiguos en claro se muestran tal cual).

@@ -36,4 +36,12 @@ function verifyMsg(pubB64, aid, contentHash, cts, sigB64) {
   try { return ed25519.verify(b64.dec(sigB64), msg, b64.dec(pubB64)); } catch { return false; }
 }
 
-export const msgSig = { getIdentity, signedString, signMsg, verifyMsg };
+// Firma/verificacion de cadenas arbitrarias (p. ej. autenticar la pubkey X-Wing: x39xwing:v2:<aid>:<pub>).
+function signString(identity, str) {
+  return b64.enc(ed25519.sign(new TextEncoder().encode(str), identity.sk));
+}
+function verifyString(pubB64, str, sigB64) {
+  try { return ed25519.verify(b64.dec(sigB64), new TextEncoder().encode(str), b64.dec(pubB64)); } catch { return false; }
+}
+
+export const msgSig = { getIdentity, signedString, signMsg, verifyMsg, signString, verifyString };

@@ -308,6 +308,13 @@ def verify_msg_sigs(files: dict[str, bytes], proof: dict[str, Any]) -> None:
         checked += 1
     if checked != ms.get("signed"):
         die(EXIT_SIG, f"msg_sigs.signed={ms.get('signed')} pero verificadas={checked}")
+    # Los contadores de proof.json los escribe quien genera el bundle: se contrastan con la
+    # cadena real. En v3 TODOS los mensajes deben ir firmados; uno sin firma es fallo.
+    total = len(chain.get("entries") or [])
+    if total != ms.get("total"):
+        die(EXIT_SIG, f"msg_sigs.total={ms.get('total')} pero la cadena trae {total} mensajes")
+    if proof.get("v") == "X39-NOTARIA-3" and checked != total:
+        die(EXIT_SIG, f"hilo v3 con mensajes SIN firma: firmados={checked} de {total}")
 
 
 def verify_ots(proof_bytes: bytes, ots_bytes: bytes, bitcoin_node: str | None = None) -> None:

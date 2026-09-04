@@ -4,7 +4,7 @@ import { FileText, PenLine, Anchor, ShieldCheck, Users, Coins, Atom, SearchCheck
 import { Nav } from './Nav';
 import { useAuth } from './NotariaApp';
 import { useLang } from './i18n';
-import { api, loginWithGoogle } from './api';
+import { api, goLogin } from './api';
 
 const DEMO_CERT_ID = 'demo0000demo0001';
 const STEP_ICONS = [FileText, PenLine, Anchor];
@@ -21,7 +21,7 @@ export default function Landing() {
 
   const createFirst = () => {
     if (user) navigate('/crear');
-    else loginWithGoogle('/crear');
+    else goLogin('/crear');
   };
 
   const steps = [1, 2, 3].map((n, i) => ({
@@ -34,6 +34,9 @@ export default function Landing() {
     <div data-testid="landing-page">
       <Nav />
       <main className="nt-wrap">
+        <div className="nt-card" role="status" data-testid="beta-banner" style={{ marginBottom: 18, padding: '10px 14px', borderLeft: '3px solid var(--seal)', fontSize: 13, lineHeight: 1.5 }}>
+          {t('landing.betaBanner')}
+        </div>
         <section className="nt-hero">
           <div>
             <div className="nt-label" style={{ marginBottom: 14 }}>{t('landing.tag')}</div>

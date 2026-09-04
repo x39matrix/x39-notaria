@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Nav } from './Nav';
 import { useAuth } from './NotariaApp';
 import { useLang } from './i18n';
-import { api, loginWithGoogle } from './api';
+import { api, goLogin } from './api';
 
 export default function Unirse() {
   const { id } = useParams();
@@ -35,7 +35,7 @@ export default function Unirse() {
               <h1 className="nt-serif" style={{ fontSize: 28, fontWeight: 600, margin: '0 0 10px' }}>{t('join.title')}</h1>
               <p className="nt-note" style={{ margin: '0 0 22px' }}>{t('join.body')}</p>
               <button className="nt-btn nt-btn-seal" style={{ width: '100%', justifyContent: 'center', padding: 14 }}
-                onClick={() => loginWithGoogle(`/unirse/${id}?t=${token}`)}
+                onClick={() => goLogin(`/unirse/${id}?t=${token}`)}
                 data-testid="join-login-btn">
                 {t('join.cta')}
               </button>

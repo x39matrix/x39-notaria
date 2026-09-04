@@ -1,8 +1,6 @@
 const API = process.env.REACT_APP_BACKEND_URL;
 const BASE = `${API}/api/notaria`;
-
 let _csrf = null;
-
 async function req(path, { method = 'GET', body } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (method !== 'GET' && _csrf) headers['X-CSRF-Token'] = _csrf;
@@ -20,10 +18,11 @@ async function req(path, { method = 'GET', body } = {}) {
   }
   return data;
 }
-
 export const api = {
-  exchangeSession: async (session_id) => {
-    const d = await req('/auth/session', { method: 'POST', body: { session_id } });
+  // Identidad por llave (reto Ed25519). Sin correo ni terceros.
+  keyChallenge: (pub_b64) => req('/auth/key/challenge', { method: 'POST', body: { pub_b64 } }),
+  keyVerify: async (pub_b64, nonce, sig_b64) => {
+    const d = await req('/auth/key/verify', { method: 'POST', body: { pub_b64, nonce, sig_b64 } });
     if (d.csrf_token) _csrf = d.csrf_token;
     return d;
   },
@@ -63,13 +62,10 @@ export const api = {
   proofJsonUrl: (id) => `${BASE}/proof/${id}.json`,
   shareUrl: (id) => `${BASE}/p/${id}`,
 };
-
-// REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-export function loginWithGoogle(returnPath = '/panel') {
-  const redirectUrl = window.location.origin + returnPath;
-  window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+// Ir a la pantalla de entrada propia (identidad por llave).
+export function goLogin(returnPath = '/panel') {
+  window.location.href = `/entrar?next=${encodeURIComponent(returnPath)}`;
 }
-
 // SHA-256 en el navegador (el archivo NUNCA se sube)
 export async function sha256Hex(bufferOrString) {
   const data = typeof bufferOrString === 'string'
@@ -78,7 +74,6 @@ export async function sha256Hex(bufferOrString) {
   const digest = await crypto.subtle.digest('SHA-256', data);
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
-
 export async function sha256File(file) {
   const buf = await file.arrayBuffer();
   return sha256Hex(buf);
